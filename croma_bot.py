@@ -1,82 +1,90 @@
 import os
-import time
 import csv
+import time
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
-from dotenv import load_dotenv
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from email_alert import send_email
 
 load_dotenv()
+
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 EMAIL_TO = os.getenv("EMAIL_TO")
 
-def load_products_from_csv(csv_file):
+PRODUCT_FILE = "products.csv"
+
+def load_product_list():
     products = []
-    try:
-        with open(csv_file, mode="r", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                if "name" in row and "url" in row:
-                    products.append({
-                        "name": row["name"],
-                        "url": row["url"]
-                    })
-    except Exception as e:
-        print(f"❌ Failed to load products from CSV: {e}")
+    with open(PRODUCT_FILE, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            products.append({
+                "name": row["name"],
+                "url": row["url"]
+            })
     return products
 
-PRODUCTS = load_products_from_csv("product.csv")
-
-def send_email(subject, message):
-    msg = MIMEMultipart()
-    msg["From"] = EMAIL_USER
-    msg["To"] = EMAIL_TO
-    msg["Subject"] = subject
-    msg.attach(MIMEText(message, "plain"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.sendmail(EMAIL_USER, EMAIL_TO, msg.as_string())
-            print(f"✅ Email sent: {subject}")
-    except Exception as e:
-        print(f"❌ Failed to send email: {e}")
-
 def check_croma_stock():
-    print(f"🔄 Checking stock at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920x1080")
+    options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    try:
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()),
+            options=options
+        )
+        driver.set_page_load_timeout(15)
+    except WebDriverException as e:
+        print(f"❌ Failed to start Chrome: {e}")
+        return
 
-    for product in PRODUCTS:
+    products = load_product_list()
+
+    for product in products:
+        name = product["name"]
+        url = product["url"]
+        print(f"🛒 Checking stock for: {name}")
+
         try:
-            driver.get(product["url"])
-            time.sleep(3)
-            body_text = driver.page_source.lower()
+            driver.get(url)
+            time.sleep(2)  # Wait for page to render
 
-            if "sold out" in body_text or "notify me" in body_text:
-                print(f"❌ Out of stock: {product['name']}")
-            else:
-                print(f"✅ In stock: {product['name']}")
-                send_email(
-                    subject=f"IN STOCK: {product['name']}",
-                    message=f"{product['name']} is available now:\n{product['url']}"
-                )
+            try:
+                # Try to find "Add to Cart" or "Buy Now"
+                atc = driver.find_element(By.XPATH, "//button[contains(text(),'Add to Cart') or contains(text(),'Buy Now')]")
+                if atc and atc.is_enabled():
+                    print(f"✅ In stock: {name}")
+                    send_email(
+                        subject=f"{name} is in stock!",
+                        body=f"The product is in stock:\n{name}\n{url}",
+                        to=EMAIL_TO
+                    )
+                    continue
+            except:
+                pass
+
+            # Check for Out of Stock marker
+            try:
+                out_text = driver.find_element(By.XPATH, "//button[contains(text(),'Notify Me')]")
+                if out_text:
+                    print(f"❌ Out of stock: {name}")
+            except:
+                print(f"❓ Stock status unknown: {name}")
+
+        except TimeoutException:
+            print(f"⚠️ Timeout while loading: {url}")
         except Exception as e:
-            print(f"⚠️ Error checking {product['name']}: {e}")
+            print(f"⚠️ Error checking {name}: {e}")
 
     driver.quit()
 
 if __name__ == "__main__":
+    print(f"🔄 Checking stock at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     check_croma_stock()
