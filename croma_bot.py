@@ -24,4 +24,8 @@ def load_product_list():
 
     with open(PRODUCT_FILE, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
-        for r
+        for row in reader:
+            print(f"➡️ Found product: {row}")
+            products.append({
+                "name": row["name"],
+                "u
