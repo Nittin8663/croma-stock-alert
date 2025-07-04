@@ -22,4 +22,4 @@ def load_product_list():
     if not os.path.exists(PRODUCT_FILE):
         print(f"❌ Product file not found: {PRODUCT_FILE}")
         return products
-    with open(PRODUCT_FILE, new_
+    with open(PRODUCT_FILE, newline='') as csvfile:
