@@ -54,12 +54,4 @@ def check_croma_stock():
         return
 
     for product in products:
-        name = product["name"]
-        url = product["url"]
-        print(f"\n🛒 Checking: {name}\n🔗 {url}")
-
-        try:
-            driver.get(url)
-            time.sleep(2)
-
-            try:
+        name = product["name]()
