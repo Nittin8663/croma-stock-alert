@@ -9,33 +9,19 @@ from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 from email_alert import send_email
 
+# Load environment variables
 load_dotenv()
 
 EMAIL_TO = os.getenv("EMAIL_TO")
 PRODUCT_FILE = "products.csv"
 
 def load_product_list():
+    print("🔄 Loading products from CSV...")
     products = []
     if not os.path.exists(PRODUCT_FILE):
         print(f"❌ File not found: {PRODUCT_FILE}")
         return products
+
     with open(PRODUCT_FILE, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
-        for row in reader:
-            products.append({
-                "name": row["name"],
-                "url": row["url"]
-            })
-    return products
-
-def check_croma_stock():
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.set_page_load_timeout(15)
-
-    products = load_product_
+        for r
