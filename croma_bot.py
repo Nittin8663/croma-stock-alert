@@ -38,4 +38,34 @@ def check_croma_stock():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1_
+    options.add_argument("--window-size=1920,1080")
+
+    try:
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()),
+            options=options
+        )
+        driver.set_page_load_timeout(15)
+    except WebDriverException as e:
+        print(f"❌ Failed to start Chrome: {e}")
+        return
+
+    products = load_product_list()
+    if not products:
+        print("⚠️ No products to check.")
+        return
+
+    for product in products:
+        name = product["name"]
+        url = product["url"]
+        print(f"\n🛒 Checking: {name}\n🔗 {url}")
+
+        try:
+            driver.get(url)
+            time.sleep(2)
+
+            # Check for Add to Cart / Buy Now
+            try:
+                atc_button = driver.find_element(By.XPATH, "//button[contains(text(),'Add') or contains(text(),'Buy') or contains(text(),'Cart')]")
+                if atc_button and atc_button.is_enabled():
+                    print(f"✅ I
