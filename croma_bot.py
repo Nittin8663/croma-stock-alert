@@ -19,6 +19,9 @@ PRODUCT_FILE = "products.csv"
 
 def load_product_list():
     products = []
+    if not os.path.exists(PRODUCT_FILE):
+        print(f"❌ Product file not found: {PRODUCT_FILE}")
+        return products
     with open(PRODUCT_FILE, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
@@ -46,45 +49,17 @@ def check_croma_stock():
         return
 
     products = load_product_list()
+    if not products:
+        print("⚠️ No products to check.")
+        return
 
     for product in products:
         name = product["name"]
         url = product["url"]
-        print(f"🛒 Checking stock for: {name}")
+        print(f"\n🛒 Checking: {name}\n🔗 {url}")
 
         try:
             driver.get(url)
-            time.sleep(2)  # Wait for page to render
+            time.sleep(2)
 
             try:
-                # Try to find "Add to Cart" or "Buy Now"
-                atc = driver.find_element(By.XPATH, "//button[contains(text(),'Add to Cart') or contains(text(),'Buy Now')]")
-                if atc and atc.is_enabled():
-                    print(f"✅ In stock: {name}")
-                    send_email(
-                        subject=f"{name} is in stock!",
-                        body=f"The product is in stock:\n{name}\n{url}",
-                        to=EMAIL_TO
-                    )
-                    continue
-            except:
-                pass
-
-            # Check for Out of Stock marker
-            try:
-                out_text = driver.find_element(By.XPATH, "//button[contains(text(),'Notify Me')]")
-                if out_text:
-                    print(f"❌ Out of stock: {name}")
-            except:
-                print(f"❓ Stock status unknown: {name}")
-
-        except TimeoutException:
-            print(f"⚠️ Timeout while loading: {url}")
-        except Exception as e:
-            print(f"⚠️ Error checking {name}: {e}")
-
-    driver.quit()
-
-if __name__ == "__main__":
-    print(f"🔄 Checking stock at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    check_croma_stock()
