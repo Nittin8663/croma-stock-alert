@@ -1,116 +1,60 @@
-import time
-import json
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
+import time
+import json
 
-# === CONFIG ===
+# Load Telegram credentials from JSON file
+with open("telegram.json", "r") as file:
+    config = json.load(file)
+    TELEGRAM_BOT_TOKEN = config["bot_token"]
+    TELEGRAM_CHAT_ID = config["chat_id"]
+
+PRODUCTS = {
+    "Y300-Emerald": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901",
+    "X200-Frost": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890"
+}
+
 PINCODE = "400049"
-CHECK_INTERVAL = 30  # seconds
-TELEGRAM_FILE = 'telegram.json'
-
-# Direct product list
-PRODUCTS = [
-    {
-        "name": "Y300-Silver",
-        "url": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-titanium-silver-/p/311900"
-    },
-    {
-        "name": "Y400",
-        "url": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890"
-    }
-]
-
-# === LOAD TELEGRAM CONFIG ===
-def load_telegram_config():
-    with open(TELEGRAM_FILE, 'r') as f:
-        data = json.load(f)
-        return data['token'], data['chat_id']
-
-TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        requests.post(url, data=data)
+        requests.post(url, data=payload)
     except Exception as e:
-        print(f"[❌] Error sending message: {e}")
+        print(f"Failed to send message: {e}")
 
-# === SETUP BROWSER ===
-def setup_browser():
-    options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    return webdriver.Chrome(options=options)
-
-# === CHECK STOCK LOGIC ===
-def check_stock(driver):
-    for product in PRODUCTS:
-        name = product["name"]
-        url = product["url"]
-        print(f"🔍 Checking {name}...")
-
-        try:
-            driver.get(url)
-            time.sleep(4)
-
-            # STEP 1: Check if "Buy Now" or "Add to Cart" button exists
-            try:
-                buy_button = driver.find_element(By.XPATH, '//button[contains(text(), "Buy Now") or contains(text(), "Add to Cart")]')
-                in_stock = buy_button.is_enabled()
-            except NoSuchElementException:
-                in_stock = False
-
-            # STEP 2: Check deliverability to pincode
-            try:
-                # Try to find and fill the pincode field
-                pincode_input = driver.find_element(By.CSS_SELECTOR, 'input[type="tel"], input[id*="pincode"]')
-                pincode_input.clear()
-                pincode_input.send_keys(PINCODE)
-                time.sleep(1)
-
-                # Click check button
-                check_buttons = driver.find_elements(By.XPATH, '//button[contains(text(), "Check")]')
-                for btn in check_buttons:
-                    if btn.is_enabled():
-                        btn.click()
-                        time.sleep(2)
-                        break
-
-                page_source = driver.page_source
-                soup = BeautifulSoup(page_source, 'html.parser')
-                not_serviceable = soup.find(text=lambda t: t and ("not serviceable" in t.lower() or "not deliverable" in t.lower()))
-                deliverable = not_serviceable is None
-            except Exception:
-                print(f"[⚠️] Pincode input not found on {name}")
-                deliverable = False
-
-            # STEP 3: Evaluate and report
-            if in_stock and deliverable:
-                print(f"[🟢 In Stock and ✅ Deliverable] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE*! \n[Buy Now]({url})")
-            elif in_stock and not deliverable:
-                print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
-            else:
-                print(f"[🔴 Out of Stock] {name}")
-
-        except Exception as e:
-            print(f"[❌] Error checking {name}: {e}")
-
-# === MAIN RUNNER ===
-if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot Started...")
-    browser = setup_browser()
+def check_stock(url, name):
+    session = requests.Session()
     try:
-        while True:
-            check_stock(browser)
-            time.sleep(CHECK_INTERVAL)
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
-    finally:
-        browser.quit()
+        response = session.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Check Buy Now button
+        buy_button = soup.select_one('button[data-testid="buy-button"]')
+        buy_available = bool(buy_button and 'Buy Now' in buy_button.get_text())
+
+        # Check pincode deliverability via Croma API
+        product_id = url.split("/")[-1].split("/p/")[-1]
+        api_url = "https://www.croma.com/ccstoreui/v1/pickupStore/getProductAvailabilityByPincode"
+        payload = {"pincode": PINCODE, "productId": product_id}
+
+        pincode_response = session.post(api_url, json=payload, headers=HEADERS, timeout=10)
+        deliverable = pincode_response.json().get("pincodeAvailable", False)
+
+        if buy_available and deliverable:
+            send_telegram_message(f"🟢 <b>{name}</b> is <b>In Stock</b> & Deliverable to <b>{PINCODE}</b>\n{url}")
+        elif buy_available:
+            send_telegram_message(f"🟡 <b>{name}</b> is <b>In Stock</b> but <b>Not Deliverable</b> to <b>{PINCODE}</b>\n{url}")
+        else:
+            print(f"[🔴 Out of Stock] {name}")
+    except Exception as e:
+        print(f"[⚠️ Error] {name} - {e}")
+
+if __name__ == "__main__":
+    while True:
+        print("🔍 Checking Croma stock...")
+        for name, url in PRODUCTS.items():
+            check_stock(url, name)
+        time.sleep(60)  # Check every 60 seconds
