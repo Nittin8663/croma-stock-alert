@@ -1,81 +1,80 @@
-import time
 import json
+import time
 import requests
-from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from bs4 import BeautifulSoup
 
-# === CONFIG ===
-CHECK_INTERVAL = 20  # seconds
-PRODUCTS_FILE = 'products.json'
-TELEGRAM_FILE = 'telegram.json'
+# Load product URLs
+with open('products.json', 'r') as f:
+    products = json.load(f)
 
 # Load Telegram config
-def load_telegram_config():
-    with open(TELEGRAM_FILE, 'r') as f:
-        data = json.load(f)
-        return data['token'], data['chat_id']
+with open('telegram/telegram.json', 'r') as f:
+    telegram_config = json.load(f)
 
-TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
+TELEGRAM_TOKEN = telegram_config['token']
+CHAT_ID = telegram_config['chat_id']
 
-# Load product list
-def load_products():
-    with open(PRODUCTS_FILE, 'r') as f:
-        return json.load(f)
+CHECK_INTERVAL = 20  # seconds
 
-# Send Telegram alert
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=data)
-    except Exception as e:
-        print(f"[❌] Error sending message: {e}")
+headers_list = [
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    },
+    {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    },
+]
 
-# Setup headless Chrome browser
-def setup_browser():
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920x1080')
-    driver = webdriver.Chrome(options=options)
-    return driver
+options = Options()
+options.add_argument('--headless')
+options.add_argument('--disable-gpu')
+driver = webdriver.Chrome(options=options)
 
-# Check stock from HTML
 def is_in_stock(page_source):
     soup = BeautifulSoup(page_source, 'html.parser')
-    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
-    return out_of_stock_tag is None
+    buy_button = soup.find(string="Buy Now") or soup.select_one('button.add-to-cart')
+    return buy_button is not None
 
-# Main checking loop
-def check_stock(driver):
-    products = load_products()
-    for product in products:
-        name = product['name']
-        url = product['url']
-        try:
-            driver.get(url)
-            time.sleep(3)  # Wait for JS to load fully
-            page_source = driver.page_source
-            if is_in_stock(page_source):
-                print(f"[🟢 In Stock] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
-            else:
-                print(f"[🔴 Out of Stock] {name}")
-        except Exception as e:
-            print(f"[❌] Error checking {name}: {e}")
-
-# Runner
-if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
-    browser = setup_browser()
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': CHAT_ID,
+        'text': message,
+        'parse_mode': 'Markdown'
+    }
     try:
-        while True:
-            check_stock(browser)
-            time.sleep(CHECK_INTERVAL)
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
-    finally:
-        browser.quit()
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"[❌] Telegram Error: {e}")
+
+print("🚀 Croma Stock Alert Bot Started...")
+
+while True:
+    for product in products:
+        url = product['url']
+        name = product['name']
+        success = False
+
+        for headers in headers_list:
+            try:
+                driver.get(url)
+                time.sleep(3)
+                if is_in_stock(driver.page_source):
+                    message = f"[🟢 In Stock] *{name}*\n[Buy Now]({url})"
+                    send_telegram_message(message)
+                    print(message)
+                else:
+                    print(f"[🔴 Out of Stock] {name}")
+                success = True
+                break
+            except Exception as e:
+                print(f"[Retry] Error for {name}, retrying with different headers...\n{e}")
+
+        if not success:
+            print(f"[⚠️] Failed to fetch {name}")
+
+    time.sleep(CHECK_INTERVAL)
