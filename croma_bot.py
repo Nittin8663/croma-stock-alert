@@ -4,14 +4,11 @@ import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-PINCODE = "400049"
 
 # Load Telegram config
 def load_telegram_config():
@@ -46,40 +43,11 @@ def setup_browser():
     driver = webdriver.Chrome(options=options)
     return driver
 
-# Check if in stock
+# Check stock from HTML
 def is_in_stock(page_source):
     soup = BeautifulSoup(page_source, 'html.parser')
     out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
     return out_of_stock_tag is None
-
-# Check pincode deliverability
-def check_pincode_deliverable(driver, pincode):
-    try:
-        time.sleep(1)
-
-        # Try to open pincode popup
-        try:
-            change_pin = driver.find_element(By.XPATH, "//button[contains(text(), 'Change')]")
-            change_pin.click()
-            time.sleep(1)
-        except:
-            pass
-
-        # Input and submit pincode
-        pincode_input = driver.find_element(By.ID, "pincode-check")
-        pincode_input.clear()
-        pincode_input.send_keys(pincode)
-        pincode_input.send_keys(Keys.RETURN)
-        time.sleep(3)
-
-        # Parse DOM and look for undeliverable messages
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        undeliverable = soup.find(string=lambda t: "Not Available for your pincode" in t or "Delivery unavailable" in t)
-        return not bool(undeliverable)
-
-    except Exception as e:
-        print(f"[⚠️] Pincode check failed: {e}")
-        return False
 
 # Main checking loop
 def check_stock(driver):
@@ -89,18 +57,13 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)
+            time.sleep(3)  # Wait for JS to load fully
             page_source = driver.page_source
-
             if is_in_stock(page_source):
-                if check_pincode_deliverable(driver, PINCODE):
-                    print(f"[🟢 In Stock & Deliverable] {name}")
-                    send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE*! \n[Buy Now]({url})")
-                else:
-                    print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
-
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
