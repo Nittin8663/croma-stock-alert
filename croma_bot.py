@@ -7,12 +7,16 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-# === CONFIG ===
-CHECK_INTERVAL = 30  # seconds
+CHECK_INTERVAL = 20  # seconds
 PINCODE = "400049"
-TELEGRAM_FILE = "telegram.json"
 
-# === HARDCODED PRODUCT LIST ===
+# Load Telegram config
+with open('telegram.json', 'r') as f:
+    data = json.load(f)
+    TELEGRAM_TOKEN = data['token']
+    TELEGRAM_CHAT_ID = data['chat_id']
+
+# Hardcoded products
 PRODUCTS = [
     {
         "name": "Y300-Silver",
@@ -24,94 +28,84 @@ PRODUCTS = [
     }
 ]
 
-# === LOAD TELEGRAM CONFIG ===
-def load_telegram_config():
-    with open(TELEGRAM_FILE, 'r') as f:
-        data = json.load(f)
-        return data['token'], data['chat_id']
-
-TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
-
-def send_telegram_message(message):
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print(f"[❌] Error sending message: {e}")
+        print(f"[❌] Telegram error: {e}")
 
 def setup_browser():
     options = Options()
     options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920x1080')
     return webdriver.Chrome(options=options)
 
-def is_in_stock(page_source):
-    soup = BeautifulSoup(page_source, 'html.parser')
-    out_of_stock_div = soup.find("div", class_="out-of-stock-msg")
-    return out_of_stock_div is None
+def check_stock_and_delivery(driver):
+    for product in PRODUCTS:
+        name = product['name']
+        url = product['url']
+        print(f"🔍 Checking {name}...")
+        try:
+            driver.get(url)
+            time.sleep(4)
 
-def check_product(driver, product):
-    name = product['name']
-    url = product['url']
-    print(f"🔍 Checking {name}...")
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            out_of_stock = soup.find("div", class_="out-of-stock-msg")
+            in_stock = out_of_stock is None
 
-    try:
-        driver.get(url)
-        time.sleep(3)
+            # Try to locate and enter pincode
+            delivery_status = "⚠️ Pincode input not found"
+            try:
+                input_field = None
+                # Try known selectors
+                try:
+                    input_field = driver.find_element(By.ID, "pincode-check")
+                except:
+                    try:
+                        input_field = driver.find_element(By.XPATH, '//input[contains(@placeholder, "Enter Pincode")]')
+                    except:
+                        try:
+                            input_field = driver.find_element(By.CSS_SELECTOR, 'input[type="tel"]')
+                        except:
+                            input_field = None
 
-        in_stock = is_in_stock(driver.page_source)
-        if not in_stock:
-            print(f"[🔴 Out of Stock] {name}")
-            return
+                if input_field:
+                    input_field.clear()
+                    input_field.send_keys(PINCODE)
+                    input_field.send_keys(Keys.ENTER)
+                    time.sleep(3)
 
-        # --- Try to detect pincode input by brute force ---
-        pincode_input = None
-        all_inputs = driver.find_elements(By.TAG_NAME, "input")
-        for inp in all_inputs:
-            attrs = [
-                (inp.get_attribute("placeholder") or "").lower(),
-                (inp.get_attribute("aria-label") or "").lower(),
-                (inp.get_attribute("name") or "").lower(),
-                (inp.get_attribute("id") or "").lower(),
-            ]
-            if any("pincode" in attr for attr in attrs):
-                pincode_input = inp
-                break
+                    page = BeautifulSoup(driver.page_source, 'html.parser')
+                    deliverable = not bool(page.find(string=lambda t: "not deliverable" in t.lower() or "unavailable" in t.lower()))
+                    delivery_status = "✅ Deliverable" if deliverable else "❌ Not deliverable"
+                else:
+                    print(f"[⚠️] Pincode input not found on {name}")
 
-        if not pincode_input:
-            print(f"[⚠️] Pincode input not found on {name}")
-            return
+            except Exception as e:
+                print(f"[⚠️] Error with pincode input: {e}")
 
-        pincode_input.clear()
-        pincode_input.send_keys(PINCODE)
-        pincode_input.send_keys(Keys.RETURN)
-        time.sleep(3)
+            # Final message
+            if in_stock and delivery_status == "✅ Deliverable":
+                print(f"[🟢 IN STOCK & DELIVERABLE] {name}")
+                send_telegram(f"🟢 *{name}* is *IN STOCK & DELIVERABLE*! \n[Buy Now]({url})")
+            elif in_stock:
+                print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
+            else:
+                print(f"[🔴 Out of Stock] {name}")
 
-        # Check if deliverable
-        page = driver.page_source
-        deliverable = "Not deliverable" not in page and "Enter pincode" not in page
-        if deliverable:
-            print(f"[✅ In Stock & Deliverable] {name}")
-            send_telegram_message(f"✅ *{name}* is *In Stock & Deliverable*! \n[Buy Now]({url})")
-        else:
-            print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
-            send_telegram_message(f"🟡 *{name}* is *In Stock* but *Not Deliverable* to {PINCODE}. \n[Check Now]({url})")
+        except Exception as e:
+            print(f"[❌] Error checking {name}: {e}")
 
-    except Exception as e:
-        print(f"[❌] Error checking {name}: {e}")
-
-# === MAIN LOOP ===
 if __name__ == "__main__":
     print("🚀 Croma Stock Alert Bot Started...")
     driver = setup_browser()
     try:
         while True:
-            for product in PRODUCTS:
-                check_product(driver, product)
+            check_stock_and_delivery(driver)
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
         print("🛑 Bot stopped by user.")
