@@ -52,45 +52,47 @@ def is_in_stock(page_source):
     out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
     return out_of_stock_tag is None
 
-# Check deliverability to the given pincode
+# Check if product is deliverable to the specified pincode
 def is_deliverable(driver):
     try:
-        # Try multiple possible selectors
-        input_found = False
-        possible_selectors = [
-            '[id="pincode-check"]',
-            'input[placeholder*="Enter Pincode"]',
-            'input[class*="pincode"]',
-            'input[type="tel"]',
-        ]
-        for selector in possible_selectors:
-            try:
-                input_element = driver.find_element(By.CSS_SELECTOR, selector)
-                input_found = True
-                break
-            except:
-                continue
+        time.sleep(1)
 
-        if not input_found:
+        inputs = driver.find_elements(By.TAG_NAME, "input")
+        target_input = None
+
+        for input_tag in inputs:
+            placeholder = input_tag.get_attribute("placeholder")
+            aria_label = input_tag.get_attribute("aria-label")
+            name = input_tag.get_attribute("name")
+            class_name = input_tag.get_attribute("class")
+
+            if (placeholder and "pincode" in placeholder.lower()) or \
+               (aria_label and "pincode" in aria_label.lower()) or \
+               (name and "pincode" in name.lower()) or \
+               (class_name and "pincode" in class_name.lower()):
+                target_input = input_tag
+                break
+
+        if not target_input:
             print("[⚠️] Pincode input not found.")
             return False
 
-        input_element.clear()
-        input_element.send_keys(PINCODE)
-        input_element.send_keys(Keys.RETURN)
+        driver.execute_script("arguments[0].scrollIntoView(true);", target_input)
+        target_input.clear()
+        target_input.send_keys(PINCODE)
+        target_input.send_keys(Keys.ENTER)
         time.sleep(3)
 
-        # Check delivery status text
         page = driver.page_source
         soup = BeautifulSoup(page, 'html.parser')
-        delivery_texts = soup.find_all(string=True)
-        for text in delivery_texts:
-            if "not deliverable" in text.lower():
+        for text in soup.stripped_strings:
+            txt = text.lower()
+            if "not deliverable" in txt or "out of delivery" in txt:
                 return False
-            if "deliverable" in text.lower():
+            if "deliverable" in txt or "delivery available" in txt:
                 return True
 
-        return False  # Default fallback
+        return False
 
     except Exception as e:
         print(f"[⚠️] Pincode check failed: {e}")
@@ -104,20 +106,17 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)
+            time.sleep(4)
             page_source = driver.page_source
 
-            in_stock = is_in_stock(page_source)
-            deliverable = is_deliverable(driver)
-
-            if in_stock and deliverable:
-                print(f"[🟢 In Stock & Deliverable] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE* to {PINCODE}! \n[Buy Now]({url})")
-            elif in_stock and not deliverable:
-                print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
+            if is_in_stock(page_source):
+                if is_deliverable(driver):
+                    print(f"[✅ In Stock & Deliverable] {name}")
+                    send_telegram_message(f"✅ *{name}* is *IN STOCK* and *DELIVERABLE* to {PINCODE}\n[Buy Now]({url})")
+                else:
+                    print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
             else:
                 print(f"[🔴 Out of Stock] {name}")
-
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
