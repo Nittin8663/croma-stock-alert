@@ -5,15 +5,15 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
 
 # === CONFIG ===
-CHECK_INTERVAL = 20  # seconds
+CHECK_INTERVAL = 20
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-PINCODE = "400049"  # Set your delivery pincode here
+PINCODE = "400049"
 
 # Load Telegram config
 def load_telegram_config():
@@ -37,7 +37,7 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"[❌] Error sending message: {e}")
 
-# Setup headless Chrome browser
+# Setup headless Chrome
 def setup_browser():
     options = Options()
     options.add_argument('--headless')
@@ -45,51 +45,38 @@ def setup_browser():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920x1080')
-    driver = webdriver.Chrome(options=options)
-    return driver
+    return webdriver.Chrome(options=options)
 
 # Check if product is in stock
 def is_in_stock(page_source):
     soup = BeautifulSoup(page_source, 'html.parser')
-    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
-    return out_of_stock_tag is None
+    return soup.find("div", class_="out-of-stock-msg") is None
 
-# Check pincode deliverability
+# Updated: Check if product is deliverable to pincode
 def is_deliverable(driver):
     try:
-        # Click the pincode button or delivery section
-        pin_button_xpath = "//button[contains(text(),'Enter Pincode')] | //div[contains(@class,'check-delivery')]"
-        pin_trigger = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, pin_button_xpath))
-        )
-        driver.execute_script("arguments[0].click();", pin_trigger)
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.delivery-option-section"))
+        ).click()
 
-        # Enter pincode
         pin_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Pincode']"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Enter Pincode']"))
         )
         pin_input.clear()
         pin_input.send_keys(PINCODE)
         pin_input.send_keys(Keys.RETURN)
 
-        # Wait for delivery status
         WebDriverWait(driver, 10).until(
-            EC.any_of(
-                EC.text_to_be_present_in_element((By.XPATH, "//div[contains(@class, 'delivery-msg')]"), "Available"),
-                EC.text_to_be_present_in_element((By.XPATH, "//div[contains(@class, 'delivery-msg')]"), "Not Available")
-            )
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.delivery-msg"))
         )
-
-        # Wait for page update
-        time.sleep(2)
+        time.sleep(1)
         page = driver.page_source
         return "Not Available for your pincode" not in page
-
     except Exception as e:
         print(f"[⚠️] Pincode check error: {e}")
         return False
 
-# Main check logic
+# Check all products
 def check_stock(driver):
     products = load_products()
     for product in products:
@@ -97,13 +84,11 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Allow JS content to load
-            page_source = driver.page_source
-
-            if is_in_stock(page_source):
+            time.sleep(3)
+            if is_in_stock(driver.page_source):
                 if is_deliverable(driver):
                     print(f"[🟢 In Stock] {name}")
-                    send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *Deliverable*! \n[Buy Now]({url})")
+                    send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE*! \n[Buy Now]({url})")
                 else:
                     print(f"[⚠️ Not Deliverable] {name}")
             else:
@@ -111,7 +96,7 @@ def check_stock(driver):
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
-# Runner
+# Main loop
 if __name__ == "__main__":
     print("🚀 Croma Stock Alert Bot (Selenium) Started...")
     browser = setup_browser()
