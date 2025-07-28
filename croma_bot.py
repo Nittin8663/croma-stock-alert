@@ -1,11 +1,11 @@
-import time
 import json
+import time
 import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-PINCODE = "400049"
+PINCODE = '400049'
 
 # Load Telegram config
 def load_telegram_config():
@@ -45,28 +45,35 @@ def setup_browser():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920x1080')
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-# Check if product is deliverable to PINCODE
+# Check if deliverable to given pincode
 def is_deliverable(driver):
     try:
-        WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.CLASS_NAME, "delivery-check"))
-        ).click()
+        # Click to open pincode entry modal
+        pin_trigger = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Enter Pincode')] | //div[contains(@class, 'pincode-check')]"))
+        )
+        pin_trigger.click()
 
+        # Input pincode
         pin_input = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Pincode']"))
         )
         pin_input.clear()
         pin_input.send_keys(PINCODE)
         pin_input.send_keys(Keys.RETURN)
+
+        # Wait for delivery status to update
         time.sleep(3)
         page = driver.page_source
         return "Not Available for your pincode" not in page
-    except Exception:
+    except Exception as e:
+        print(f"[⚠️] Pincode check error: {e}")
         return False
 
-# Check stock from HTML
+# Check stock status
 def is_in_stock(page_source):
     soup = BeautifulSoup(page_source, 'html.parser')
     out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
@@ -80,14 +87,14 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Let JS load fully
+            time.sleep(3)
             page_source = driver.page_source
             if is_in_stock(page_source):
                 if is_deliverable(driver):
                     print(f"[🟢 In Stock] {name}")
-                    send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *Deliverable*!\n[Buy Now]({url})")
+                    send_telegram_message(f"🟢 *{name}* is *IN STOCK & DELIVERABLE*! \n[Buy Now]({url})")
                 else:
-                    print(f"[🚫 Not Deliverable] {name}")
+                    print(f"[⚠️ Not Deliverable] {name}")
             else:
                 print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
