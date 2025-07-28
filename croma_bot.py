@@ -6,17 +6,15 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-CHECK_INTERVAL = 20  # seconds
+# === CONFIG ===
 PINCODE = "400049"
+CHECK_INTERVAL = 30  # seconds
+TELEGRAM_FILE = 'telegram.json'
 
-# Load Telegram config
-with open('telegram.json', 'r') as f:
-    data = json.load(f)
-    TELEGRAM_TOKEN = data['token']
-    TELEGRAM_CHAT_ID = data['chat_id']
-
-# Hardcoded products
+# Hardcoded product list
 PRODUCTS = [
     {
         "name": "Y300-Silver",
@@ -28,14 +26,24 @@ PRODUCTS = [
     }
 ]
 
-def send_telegram(message):
+# Load Telegram config
+def load_telegram_config():
+    with open(TELEGRAM_FILE, 'r') as f:
+        data = json.load(f)
+        return data['token'], data['chat_id']
+
+TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
+
+# Send Telegram alert
+def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print(f"[❌] Telegram error: {e}")
+        print(f"[❌] Error sending message: {e}")
 
+# Setup headless browser
 def setup_browser():
     options = Options()
     options.add_argument('--headless')
@@ -44,54 +52,57 @@ def setup_browser():
     options.add_argument('--window-size=1920x1080')
     return webdriver.Chrome(options=options)
 
-def check_stock_and_delivery(driver):
+# Main checker
+def check_stock(driver):
     for product in PRODUCTS:
         name = product['name']
         url = product['url']
         print(f"🔍 Checking {name}...")
+
         try:
             driver.get(url)
-            time.sleep(4)
+            time.sleep(3)
+            page_source = driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
 
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            out_of_stock = soup.find("div", class_="out-of-stock-msg")
-            in_stock = out_of_stock is None
+            # Check if "Buy Now" or similar button exists
+            in_stock = "Buy Now" in page_source or "Add to Cart" in page_source
 
-            # Try to locate and enter pincode
+            # Attempt pincode check
             delivery_status = "⚠️ Pincode input not found"
             try:
-                input_field = None
-                # Try known selectors
+                # Step 1: Click "Change" or "Deliver to"
                 try:
-                    input_field = driver.find_element(By.ID, "pincode-check")
+                    change_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable(
+                        (By.XPATH, '//span[contains(text(), "Change") or contains(text(), "Deliver to")]')
+                    ))
+                    change_btn.click()
+                    time.sleep(1.5)
                 except:
-                    try:
-                        input_field = driver.find_element(By.XPATH, '//input[contains(@placeholder, "Enter Pincode")]')
-                    except:
-                        try:
-                            input_field = driver.find_element(By.CSS_SELECTOR, 'input[type="tel"]')
-                        except:
-                            input_field = None
+                    pass
 
-                if input_field:
-                    input_field.clear()
-                    input_field.send_keys(PINCODE)
-                    input_field.send_keys(Keys.ENTER)
-                    time.sleep(3)
+                # Step 2: Enter pincode
+                input_field = WebDriverWait(driver, 5).until(EC.presence_of_element_located(
+                    (By.XPATH, '//input[contains(@placeholder, "Enter Pincode")]')
+                ))
+                input_field.clear()
+                input_field.send_keys(PINCODE)
+                input_field.send_keys(Keys.ENTER)
+                time.sleep(3)
 
-                    page = BeautifulSoup(driver.page_source, 'html.parser')
-                    deliverable = not bool(page.find(string=lambda t: "not deliverable" in t.lower() or "unavailable" in t.lower()))
-                    delivery_status = "✅ Deliverable" if deliverable else "❌ Not deliverable"
+                # Step 3: Check deliverability
+                updated_page = BeautifulSoup(driver.page_source, 'html.parser')
+                if updated_page.find(string=lambda t: "not deliverable" in t.lower() or "unavailable" in t.lower()):
+                    delivery_status = "❌ Not Deliverable"
                 else:
-                    print(f"[⚠️] Pincode input not found on {name}")
-
+                    delivery_status = "✅ Deliverable"
             except Exception as e:
-                print(f"[⚠️] Error with pincode input: {e}")
+                print(f"[⚠️] Pincode input not found on {name}")
 
-            # Final message
+            # Final decision & alert
             if in_stock and delivery_status == "✅ Deliverable":
                 print(f"[🟢 IN STOCK & DELIVERABLE] {name}")
-                send_telegram(f"🟢 *{name}* is *IN STOCK & DELIVERABLE*! \n[Buy Now]({url})")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK & DELIVERABLE*! \n[Buy Now]({url})")
             elif in_stock:
                 print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
             else:
@@ -100,14 +111,15 @@ def check_stock_and_delivery(driver):
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
+# Runner
 if __name__ == "__main__":
     print("🚀 Croma Stock Alert Bot Started...")
-    driver = setup_browser()
+    browser = setup_browser()
     try:
         while True:
-            check_stock_and_delivery(driver)
+            check_stock(browser)
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
         print("🛑 Bot stopped by user.")
     finally:
-        driver.quit()
+        browser.quit()
