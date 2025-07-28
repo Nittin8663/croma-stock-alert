@@ -5,16 +5,14 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 
 # === CONFIG ===
 PINCODE = "400049"
 CHECK_INTERVAL = 30  # seconds
 TELEGRAM_FILE = 'telegram.json'
 
-# Hardcoded product list
+# Direct product list
 PRODUCTS = [
     {
         "name": "Y300-Silver",
@@ -26,7 +24,7 @@ PRODUCTS = [
     }
 ]
 
-# Load Telegram config
+# === LOAD TELEGRAM CONFIG ===
 def load_telegram_config():
     with open(TELEGRAM_FILE, 'r') as f:
         data = json.load(f)
@@ -34,7 +32,6 @@ def load_telegram_config():
 
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
-# Send Telegram alert
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -43,67 +40,61 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"[❌] Error sending message: {e}")
 
-# Setup headless browser
+# === SETUP BROWSER ===
 def setup_browser():
     options = Options()
-    options.add_argument('--headless')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920x1080')
     return webdriver.Chrome(options=options)
 
-# Main checker
+# === CHECK STOCK LOGIC ===
 def check_stock(driver):
     for product in PRODUCTS:
-        name = product['name']
-        url = product['url']
+        name = product["name"]
+        url = product["url"]
         print(f"🔍 Checking {name}...")
 
         try:
             driver.get(url)
-            time.sleep(3)
-            page_source = driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
+            time.sleep(4)
 
-            # Check if "Buy Now" or similar button exists
-            in_stock = "Buy Now" in page_source or "Add to Cart" in page_source
-
-            # Attempt pincode check
-            delivery_status = "⚠️ Pincode input not found"
+            # STEP 1: Check if "Buy Now" or "Add to Cart" button exists
             try:
-                # Step 1: Click "Change" or "Deliver to"
-                try:
-                    change_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable(
-                        (By.XPATH, '//span[contains(text(), "Change") or contains(text(), "Deliver to")]')
-                    ))
-                    change_btn.click()
-                    time.sleep(1.5)
-                except:
-                    pass
+                buy_button = driver.find_element(By.XPATH, '//button[contains(text(), "Buy Now") or contains(text(), "Add to Cart")]')
+                in_stock = buy_button.is_enabled()
+            except NoSuchElementException:
+                in_stock = False
 
-                # Step 2: Enter pincode
-                input_field = WebDriverWait(driver, 5).until(EC.presence_of_element_located(
-                    (By.XPATH, '//input[contains(@placeholder, "Enter Pincode")]')
-                ))
-                input_field.clear()
-                input_field.send_keys(PINCODE)
-                input_field.send_keys(Keys.ENTER)
-                time.sleep(3)
+            # STEP 2: Check deliverability to pincode
+            try:
+                # Try to find and fill the pincode field
+                pincode_input = driver.find_element(By.CSS_SELECTOR, 'input[type="tel"], input[id*="pincode"]')
+                pincode_input.clear()
+                pincode_input.send_keys(PINCODE)
+                time.sleep(1)
 
-                # Step 3: Check deliverability
-                updated_page = BeautifulSoup(driver.page_source, 'html.parser')
-                if updated_page.find(string=lambda t: "not deliverable" in t.lower() or "unavailable" in t.lower()):
-                    delivery_status = "❌ Not Deliverable"
-                else:
-                    delivery_status = "✅ Deliverable"
-            except Exception as e:
+                # Click check button
+                check_buttons = driver.find_elements(By.XPATH, '//button[contains(text(), "Check")]')
+                for btn in check_buttons:
+                    if btn.is_enabled():
+                        btn.click()
+                        time.sleep(2)
+                        break
+
+                page_source = driver.page_source
+                soup = BeautifulSoup(page_source, 'html.parser')
+                not_serviceable = soup.find(text=lambda t: t and ("not serviceable" in t.lower() or "not deliverable" in t.lower()))
+                deliverable = not_serviceable is None
+            except Exception:
                 print(f"[⚠️] Pincode input not found on {name}")
+                deliverable = False
 
-            # Final decision & alert
-            if in_stock and delivery_status == "✅ Deliverable":
-                print(f"[🟢 IN STOCK & DELIVERABLE] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK & DELIVERABLE*! \n[Buy Now]({url})")
-            elif in_stock:
+            # STEP 3: Evaluate and report
+            if in_stock and deliverable:
+                print(f"[🟢 In Stock and ✅ Deliverable] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE*! \n[Buy Now]({url})")
+            elif in_stock and not deliverable:
                 print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
             else:
                 print(f"[🔴 Out of Stock] {name}")
@@ -111,7 +102,7 @@ def check_stock(driver):
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
-# Runner
+# === MAIN RUNNER ===
 if __name__ == "__main__":
     print("🚀 Croma Stock Alert Bot Started...")
     browser = setup_browser()
