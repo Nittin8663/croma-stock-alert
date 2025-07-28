@@ -1,59 +1,81 @@
+import time
+import json
 import requests
 from bs4 import BeautifulSoup
-import time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-# ✅ These should already be available in your environment or another file
-# Make sure to define them before running this script
-# Example:
-# TELEGRAM_BOT_TOKEN = ...
-# TELEGRAM_CHAT_ID = ...
+# === CONFIG ===
+CHECK_INTERVAL = 20  # seconds
+PRODUCTS_FILE = 'products.json'
+TELEGRAM_FILE = 'telegram.json'
 
-PRODUCTS = {
-    "Y300-Emerald": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901",
-    "X200-Frost": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890"
-}
+# Load Telegram config
+def load_telegram_config():
+    with open(TELEGRAM_FILE, 'r') as f:
+        data = json.load(f)
+        return data['token'], data['chat_id']
 
-PINCODE = "400049"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
+# Load product list
+def load_products():
+    with open(PRODUCTS_FILE, 'r') as f:
+        return json.load(f)
+
+# Send Telegram alert
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(url, data=payload, timeout=10)
+        requests.post(url, data=data)
     except Exception as e:
-        print(f"[Telegram Error] {e}")
+        print(f"[❌] Error sending message: {e}")
 
-def check_stock(url, name):
-    session = requests.Session()
-    try:
-        response = session.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(response.text, "html.parser")
+# Setup headless Chrome browser
+def setup_browser():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920x1080')
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-        # Check for Buy Now
-        buy_button = soup.select_one('button[data-testid="buy-button"]')
-        in_stock = bool(buy_button and "Buy Now" in buy_button.text)
+# Check stock from HTML
+def is_in_stock(page_source):
+    soup = BeautifulSoup(page_source, 'html.parser')
+    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
+    return out_of_stock_tag is None
 
-        # Pincode delivery check
-        product_id = url.split("/p/")[-1]
-        api_url = "https://www.croma.com/ccstoreui/v1/pickupStore/getProductAvailabilityByPincode"
-        payload = {"pincode": PINCODE, "productId": product_id}
-        pin_response = session.post(api_url, json=payload, headers=HEADERS, timeout=10)
-        deliverable = pin_response.json().get("pincodeAvailable", False)
+# Main checking loop
+def check_stock(driver):
+    products = load_products()
+    for product in products:
+        name = product['name']
+        url = product['url']
+        try:
+            driver.get(url)
+            time.sleep(3)  # Wait for JS to load fully
+            page_source = driver.page_source
+            if is_in_stock(page_source):
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
+            else:
+                print(f"[🔴 Out of Stock] {name}")
+        except Exception as e:
+            print(f"[❌] Error checking {name}: {e}")
 
-        # Decision logic
-        if in_stock and deliverable:
-            send_telegram_message(f"🟢 <b>{name}</b> is <b>In Stock</b> & <b>Deliverable</b> to {PINCODE}\n{url}")
-        elif in_stock:
-            send_telegram_message(f"🟡 <b>{name}</b> is <b>In Stock</b> but <b>Not Deliverable</b> to {PINCODE}\n{url}")
-        else:
-            print(f"[🔴 Out of Stock] {name}")
-    except Exception as e:
-        print(f"[⚠️ Error: {name}] {e}")
-
+# Runner
 if __name__ == "__main__":
-    while True:
-        print("🔍 Checking Croma products...")
-        for name, url in PRODUCTS.items():
-            check_stock(url, name)
-        time.sleep(60)
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
+    try:
+        while True:
+            check_stock(browser)
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        browser.quit()
