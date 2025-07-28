@@ -43,22 +43,13 @@ def setup_browser():
     driver = webdriver.Chrome(options=options)
     return driver
 
-# Check stock from Buy Now button color
+# Check if "Buy Now" button is green (in stock)
 def is_in_stock(driver):
     try:
-        # Look for the Buy Now button
-        buy_button = driver.find_element("xpath", "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'buy now')]")
-        button_color = buy_button.value_of_css_property("background-color")
-
-        # List of green shades used on Croma (add more if needed)
-        green_colors = ["rgb(0, 128, 0)", "rgb(4, 170, 109)", "rgba(4, 170, 109, 1)", "#04aa6d"]
-
-        # Normalize color
-        color = button_color.strip().lower()
-
-        return any(green in color for green in green_colors)
-    except Exception as e:
-        print(f"[⚠️] Buy Now check failed: {e}")
+        buy_now_button = driver.find_element("xpath", "//button[contains(text(),'Buy Now')]")
+        button_color = buy_now_button.value_of_css_property("background-color")
+        return "rgb(0, 128, 0)" in button_color or "rgba(0, 128, 0" in button_color
+    except:
         return False
 
 # Main checking loop
@@ -69,7 +60,7 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Wait for JS to load fully
+            time.sleep(3)  # Wait for JS to load
             if is_in_stock(driver):
                 print(f"[🟢 In Stock] {name}")
                 send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
@@ -79,4 +70,14 @@ def check_stock(driver):
             print(f"[❌] Error checking {name}: {e}")
 
 # Runner
-if __name__ == "
+if __name__ == "__main__":
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
+    try:
+        while True:
+            check_stock(browser)
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        browser.quit()
