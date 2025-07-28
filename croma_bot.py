@@ -1,95 +1,81 @@
-import json
 import time
+import json
+import requests
+from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-import os
 
-# Load product URLs
-with open('products.json', 'r') as f:
-    products = json.load(f)
+# === CONFIG ===
+CHECK_INTERVAL = 20  # seconds
+PRODUCTS_FILE = 'products.json'
+TELEGRAM_FILE = 'telegram.json'
 
-# Load Telegram bot config
-with open('telegram.json', 'r') as f:
-    telegram_config = json.load(f)
+# Load Telegram config
+def load_telegram_config():
+    with open(TELEGRAM_FILE, 'r') as f:
+        data = json.load(f)
+        return data['token'], data['chat_id']
 
-TELEGRAM_BOT_TOKEN = telegram_config['bot_token']
-TELEGRAM_CHAT_ID = telegram_config['chat_id']
+TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
-from telegram import Bot
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+# Load product list
+def load_products():
+    with open(PRODUCTS_FILE, 'r') as f:
+        return json.load(f)
 
-options = Options()
-options.add_argument('--headless')
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-dev-shm-usage')
-options.add_argument('--window-size=1920,1080')
-options.add_argument('--disable-gpu')
-
-print("🚀 Croma Stock Alert Bot Started...")
-
-def is_deliverable(driver):
+# Send Telegram alert
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        # Click the change pincode or check delivery option
-        pin_button = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, ".pincode-check, .delivery-check").strip())
-        )
-        pin_button.click()
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"[❌] Error sending message: {e}")
 
-        # Enter the pincode manually
-        pincode_input = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Pincode']"))
-        )
-        pincode_input.clear()
-        pincode_input.send_keys("400049")
-        pincode_input.send_keys(Keys.RETURN)
+# Setup headless Chrome browser
+def setup_browser():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920x1080')
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-        time.sleep(3)
-        page_source = driver.page_source
-        if "Not Available for your pincode" in page_source:
-            return False
-        return True
-    except Exception:
-        return False
+# Check stock from HTML
+def is_in_stock(page_source):
+    soup = BeautifulSoup(page_source, 'html.parser')
+    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
+    return out_of_stock_tag is None
 
-def check_stock(product):
-    name = product['name']
-    url = product['url']
-
-    try:
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        driver.get(url)
-        time.sleep(5)
-
-        # Check if Add to Cart exists
-        add_to_cart_buttons = driver.find_elements(By.XPATH, "//*[contains(text(), 'Add to Cart')]")
-
-        if add_to_cart_buttons:
-            if is_deliverable(driver):
-                message = f"[🟢 In Stock] {name}"
-                print(message)
-                bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-            else:
-                print(f"[❌ Not Deliverable] {name}")
-        else:
-            print(f"[🔴 Out of Stock] {name}")
-
-        driver.quit()
-
-    except WebDriverException as e:
-        print(f"[⚠️] Failed to fetch {name} - {e}")
-        try:
-            driver.quit()
-        except:
-            pass
-
-while True:
+# Main checking loop
+def check_stock(driver):
+    products = load_products()
     for product in products:
-        check_stock(product)
-    time.sleep(60)
+        name = product['name']
+        url = product['url']
+        try:
+            driver.get(url)
+            time.sleep(3)  # Wait for JS to load fully
+            page_source = driver.page_source
+            if is_in_stock(page_source):
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
+            else:
+                print(f"[🔴 Out of Stock] {name}")
+        except Exception as e:
+            print(f"[❌] Error checking {name}: {e}")
+
+# Runner
+if __name__ == "__main__":
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
+    try:
+        while True:
+            check_stock(browser)
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        browser.quit()
