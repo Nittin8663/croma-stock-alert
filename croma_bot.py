@@ -1,8 +1,10 @@
 import time
 import json
 import requests
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
@@ -42,11 +44,15 @@ def setup_browser():
     driver = webdriver.Chrome(options=options)
     return driver
 
-# Check if Buy Now button is present and active
+# Check if Buy Now button is active
 def is_in_stock(driver):
     try:
-        buy_now_button = driver.find_element("xpath", "//button[contains(text(),'Buy Now')]")
-        return buy_now_button.is_displayed() and buy_now_button.is_enabled()
+        button = driver.find_element(By.XPATH, "//button[contains(translate(., 'BUY NOW', 'buy now'), 'buy now')]")
+        class_attr = button.get_attribute("class")
+        disabled = button.get_attribute("disabled")
+        if disabled or "disabled" in class_attr.lower():
+            return False
+        return True
     except:
         return False
 
@@ -58,7 +64,7 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Wait for JS to load fully
+            time.sleep(3)  # Wait for JS to load
             if is_in_stock(driver):
                 print(f"[🟢 In Stock] {name}")
                 send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
