@@ -1,22 +1,16 @@
-import requests
 import time
 import json
+import requests
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.google.com/",
-    "DNT": "1",
-    "Connection": "keep-alive"
-}
 
-# Load telegram config
+# Load Telegram config
 def load_telegram_config():
     with open(TELEGRAM_FILE, 'r') as f:
         data = json.load(f)
@@ -38,39 +32,50 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"[❌] Error sending message: {e}")
 
+# Setup headless Chrome browser
+def setup_browser():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920x1080')
+    driver = webdriver.Chrome(options=options)
+    return driver
+
 # Check stock from HTML
-def is_in_stock(page_content):
-    soup = BeautifulSoup(page_content, 'html.parser')
+def is_in_stock(page_source):
+    soup = BeautifulSoup(page_source, 'html.parser')
     out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
     return out_of_stock_tag is None
 
 # Main checking loop
-def check_stock():
+def check_stock(driver):
     products = load_products()
     for product in products:
         name = product['name']
         url = product['url']
         try:
-            response = requests.get(url, headers=HEADERS, timeout=10)
-            if response.status_code == 403:
-                print(f"[Retry] 403 for {name}, retrying with different headers...")
-                response = requests.get(url, headers=HEADERS, timeout=10)
-
-            if response.status_code == 200:
-                in_stock = is_in_stock(response.text)
-                if in_stock:
-                    print(f"[🟢 In Stock] {name}")
-                    send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
-                else:
-                    print(f"[🔴 Out of Stock] {name}")
+            driver.get(url)
+            time.sleep(3)  # Wait for JS to load fully
+            page_source = driver.page_source
+            if is_in_stock(page_source):
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
             else:
-                print(f"[⚠️] Failed to fetch {name} - Status: {response.status_code}")
+                print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
 # Runner
 if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot Started...")
-    while True:
-        check_stock()
-        time.sleep(CHECK_INTERVAL)
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
+    try:
+        while True:
+            check_stock(browser)
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        browser.quit()
