@@ -1,88 +1,74 @@
-import time
-import json
-import requests
-from bs4 import BeautifulSoup
+import time, json, requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
-# === CONFIG ===
-CHECK_INTERVAL = 20  # seconds
+CHECK_INTERVAL = 20
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
 
-# Load Telegram config
 def load_telegram_config():
     with open(TELEGRAM_FILE, 'r') as f:
-        data = json.load(f)
-        return data['token'], data['chat_id']
+        d = json.load(f)
+    return d['token'], d['chat_id']
 
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
-# Load product list
 def load_products():
     with open(PRODUCTS_FILE, 'r') as f:
         return json.load(f)
 
-# Send Telegram alert
-def send_telegram_message(message):
+def send_telegram_message(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print(f"[❌] Error sending message: {e}")
+        print("[❌] Telegram Error:", e)
 
-# Setup headless Chrome browser
 def setup_browser():
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920x1080')
-    driver = webdriver.Chrome(options=options)
-    return driver
+    opts = Options()
+    opts.add_argument('--headless')
+    opts.add_argument('--disable-gpu')
+    opts.add_argument('--no-sandbox')
+    opts.add_argument('--disable-dev-shm-usage')
+    opts.add_argument('--window-size=1920x1080')
+    return webdriver.Chrome(options=opts)
 
-# Updated stock check logic using Buy Now button
 def is_in_stock(driver):
     try:
-        button = driver.find_element(By.XPATH, "//button[contains(translate(., 'BUY NOW', 'buy now'), 'buy now')]")
-        disabled = button.get_attribute("disabled")
-        classes = button.get_attribute("class") or ""
-        if disabled is not None or "disabled" in classes.lower():
-            return False
-        return True
+        for xpath in ["//button[contains(text(), 'Add to Cart')]", "//button[contains(text(), 'Buy Now')]"]:
+            btn = driver.find_element(By.XPATH, xpath)
+            txt = btn.text.lower()
+            if 'notify' in txt or 'sold out' in txt:
+                continue
+            if btn.is_displayed() and btn.is_enabled():
+                return True
+        return False
     except:
         return False
 
-# Main checking loop
 def check_stock(driver):
-    products = load_products()
-    for product in products:
-        name = product['name']
-        url = product['url']
+    for p in load_products():
+        name, url = p['name'], p['url']
         try:
-            driver.get(url)
-            time.sleep(3)  # Wait for JS to load fully
-
+            driver.get(url); time.sleep(3)
             if is_in_stock(driver):
                 print(f"[🟢 In Stock] {name}")
                 send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
-            print(f"[❌] Error checking {name}: {e}")
+            print("[❌]", name, "error:", e)
 
-# Runner
 if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
-    browser = setup_browser()
+    print("🚀 Bot started...")
+    drv = setup_browser()
     try:
         while True:
-            check_stock(browser)
+            check_stock(drv)
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
+        print("🛑 Stopped")
     finally:
-        browser.quit()
+        drv.quit()
