@@ -1,74 +1,117 @@
-import time, json, requests
+import time
+import json
+import requests
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 
-CHECK_INTERVAL = 20
+# === CONFIG ===
+CHECK_INTERVAL = 30  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
+PINCODE = "400049"  # Change this if needed
 
+# Load Telegram config
 def load_telegram_config():
     with open(TELEGRAM_FILE, 'r') as f:
-        d = json.load(f)
-    return d['token'], d['chat_id']
+        data = json.load(f)
+        return data['token'], data['chat_id']
 
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
+# Load product list
 def load_products():
     with open(PRODUCTS_FILE, 'r') as f:
         return json.load(f)
 
-def send_telegram_message(msg):
+# Send Telegram alert
+def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=data)
     except Exception as e:
-        print("[❌] Telegram Error:", e)
+        print(f"[❌] Error sending message: {e}")
 
+# Setup headless Chrome browser
 def setup_browser():
-    opts = Options()
-    opts.add_argument('--headless')
-    opts.add_argument('--disable-gpu')
-    opts.add_argument('--no-sandbox')
-    opts.add_argument('--disable-dev-shm-usage')
-    opts.add_argument('--window-size=1920x1080')
-    return webdriver.Chrome(options=opts)
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920x1080')
+    return webdriver.Chrome(options=options)
 
-def is_in_stock(driver):
+# Check if "Buy Now" button is present and green (active)
+def is_buy_now_available(driver):
     try:
-        for xpath in ["//button[contains(text(), 'Add to Cart')]", "//button[contains(text(), 'Buy Now')]"]:
-            btn = driver.find_element(By.XPATH, xpath)
-            txt = btn.text.lower()
-            if 'notify' in txt or 'sold out' in txt:
-                continue
-            if btn.is_displayed() and btn.is_enabled():
-                return True
-        return False
+        buy_btn = driver.find_element(By.XPATH, "//button[contains(., 'Buy Now')]")
+        if buy_btn and buy_btn.is_enabled():
+            return True
     except:
+        pass
+    return False
+
+# Check pincode deliverability
+def check_pincode_deliverable(driver, pincode):
+    try:
+        # Click the "Delivery at" button if needed
+        delivery_btn = driver.find_element(By.CLASS_NAME, "delivery-check-pincode")
+        delivery_btn.click()
+        time.sleep(1)
+
+        # Find pincode input
+        input_field = driver.find_element(By.ID, "pincode-check")
+        input_field.clear()
+        input_field.send_keys(pincode)
+        input_field.send_keys(Keys.RETURN)
+        time.sleep(3)
+
+        # Check for delivery message
+        page = driver.page_source
+        soup = BeautifulSoup(page, 'html.parser')
+        not_deliverable = soup.find(text=lambda t: "Not Available for your pincode" in t)
+        return not bool(not_deliverable)
+    except Exception as e:
+        print(f"[⚠️] Pincode check error: {e}")
         return False
 
+# Main check loop
 def check_stock(driver):
-    for p in load_products():
-        name, url = p['name'], p['url']
+    products = load_products()
+    for product in products:
+        name = product['name']
+        url = product['url']
         try:
-            driver.get(url); time.sleep(3)
-            if is_in_stock(driver):
-                print(f"[🟢 In Stock] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
+            driver.get(url)
+            time.sleep(3)
+
+            in_stock = is_buy_now_available(driver)
+            deliverable = check_pincode_deliverable(driver, PINCODE)
+
+            if in_stock and deliverable:
+                print(f"[✅ In Stock & Deliverable] {name}")
+                send_telegram_message(f"✅ *{name}* is *In Stock* and *Deliverable* to `{PINCODE}`!\n[Buy Now]({url})")
+            elif in_stock and not deliverable:
+                print(f"[⚠️ In Stock, ❌ Not Deliverable] {name}")
+                send_telegram_message(f"⚠️ *{name}* is *In Stock* but *NOT Deliverable* to `{PINCODE}`.\n[View Product]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
-            print("[❌]", name, "error:", e)
+            print(f"[❌] Error checking {name}: {e}")
 
+# Runner
 if __name__ == "__main__":
-    print("🚀 Bot started...")
-    drv = setup_browser()
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
     try:
         while True:
-            check_stock(drv)
+            check_stock(browser)
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
-        print("🛑 Stopped")
+        print("🛑 Bot stopped by user.")
     finally:
-        drv.quit()
+        browser.quit()
