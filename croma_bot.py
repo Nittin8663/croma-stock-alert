@@ -1,13 +1,12 @@
 import requests
 from bs4 import BeautifulSoup
 import time
-import json
 
-# Load Telegram credentials from JSON file
-with open("telegram.json", "r") as file:
-    config = json.load(file)
-    TELEGRAM_BOT_TOKEN = config["bot_token"]
-    TELEGRAM_CHAT_ID = config["chat_id"]
+# ✅ These should already be available in your environment or another file
+# Make sure to define them before running this script
+# Example:
+# TELEGRAM_BOT_TOKEN = ...
+# TELEGRAM_CHAT_ID = ...
 
 PRODUCTS = {
     "Y300-Emerald": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901",
@@ -21,9 +20,9 @@ def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        requests.post(url, data=payload)
+        requests.post(url, data=payload, timeout=10)
     except Exception as e:
-        print(f"Failed to send message: {e}")
+        print(f"[Telegram Error] {e}")
 
 def check_stock(url, name):
     session = requests.Session()
@@ -31,30 +30,30 @@ def check_stock(url, name):
         response = session.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Check Buy Now button
+        # Check for Buy Now
         buy_button = soup.select_one('button[data-testid="buy-button"]')
-        buy_available = bool(buy_button and 'Buy Now' in buy_button.get_text())
+        in_stock = bool(buy_button and "Buy Now" in buy_button.text)
 
-        # Check pincode deliverability via Croma API
-        product_id = url.split("/")[-1].split("/p/")[-1]
+        # Pincode delivery check
+        product_id = url.split("/p/")[-1]
         api_url = "https://www.croma.com/ccstoreui/v1/pickupStore/getProductAvailabilityByPincode"
         payload = {"pincode": PINCODE, "productId": product_id}
+        pin_response = session.post(api_url, json=payload, headers=HEADERS, timeout=10)
+        deliverable = pin_response.json().get("pincodeAvailable", False)
 
-        pincode_response = session.post(api_url, json=payload, headers=HEADERS, timeout=10)
-        deliverable = pincode_response.json().get("pincodeAvailable", False)
-
-        if buy_available and deliverable:
-            send_telegram_message(f"🟢 <b>{name}</b> is <b>In Stock</b> & Deliverable to <b>{PINCODE}</b>\n{url}")
-        elif buy_available:
-            send_telegram_message(f"🟡 <b>{name}</b> is <b>In Stock</b> but <b>Not Deliverable</b> to <b>{PINCODE}</b>\n{url}")
+        # Decision logic
+        if in_stock and deliverable:
+            send_telegram_message(f"🟢 <b>{name}</b> is <b>In Stock</b> & <b>Deliverable</b> to {PINCODE}\n{url}")
+        elif in_stock:
+            send_telegram_message(f"🟡 <b>{name}</b> is <b>In Stock</b> but <b>Not Deliverable</b> to {PINCODE}\n{url}")
         else:
             print(f"[🔴 Out of Stock] {name}")
     except Exception as e:
-        print(f"[⚠️ Error] {name} - {e}")
+        print(f"[⚠️ Error: {name}] {e}")
 
 if __name__ == "__main__":
     while True:
-        print("🔍 Checking Croma stock...")
+        print("🔍 Checking Croma products...")
         for name, url in PRODUCTS.items():
             check_stock(url, name)
-        time.sleep(60)  # Check every 60 seconds
+        time.sleep(60)
