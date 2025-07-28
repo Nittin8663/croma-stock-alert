@@ -4,16 +4,11 @@ import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # === CONFIG ===
-CHECK_INTERVAL = 20
+CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-PINCODE = "400049"
 
 # Load Telegram config
 def load_telegram_config():
@@ -37,7 +32,7 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"[❌] Error sending message: {e}")
 
-# Setup headless Chrome
+# Setup headless Chrome browser
 def setup_browser():
     options = Options()
     options.add_argument('--headless')
@@ -45,38 +40,28 @@ def setup_browser():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920x1080')
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-# Check if product is in stock
-def is_in_stock(page_source):
-    soup = BeautifulSoup(page_source, 'html.parser')
-    return soup.find("div", class_="out-of-stock-msg") is None
-
-# Updated: Check if product is deliverable to pincode
-def is_deliverable(driver):
+# Check stock from Buy Now button color
+def is_in_stock(driver):
     try:
-        WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.delivery-option-section"))
-        ).click()
+        # Look for the Buy Now button
+        buy_button = driver.find_element("xpath", "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'buy now')]")
+        button_color = buy_button.value_of_css_property("background-color")
 
-        pin_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder*='Enter Pincode']"))
-        )
-        pin_input.clear()
-        pin_input.send_keys(PINCODE)
-        pin_input.send_keys(Keys.RETURN)
+        # List of green shades used on Croma (add more if needed)
+        green_colors = ["rgb(0, 128, 0)", "rgb(4, 170, 109)", "rgba(4, 170, 109, 1)", "#04aa6d"]
 
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.delivery-msg"))
-        )
-        time.sleep(1)
-        page = driver.page_source
-        return "Not Available for your pincode" not in page
+        # Normalize color
+        color = button_color.strip().lower()
+
+        return any(green in color for green in green_colors)
     except Exception as e:
-        print(f"[⚠️] Pincode check error: {e}")
+        print(f"[⚠️] Buy Now check failed: {e}")
         return False
 
-# Check all products
+# Main checking loop
 def check_stock(driver):
     products = load_products()
     for product in products:
@@ -84,27 +69,14 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)
-            if is_in_stock(driver.page_source):
-                if is_deliverable(driver):
-                    print(f"[🟢 In Stock] {name}")
-                    send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE*! \n[Buy Now]({url})")
-                else:
-                    print(f"[⚠️ Not Deliverable] {name}")
+            time.sleep(3)  # Wait for JS to load fully
+            if is_in_stock(driver):
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
-# Main loop
-if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
-    browser = setup_browser()
-    try:
-        while True:
-            check_stock(browser)
-            time.sleep(CHECK_INTERVAL)
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
-    finally:
-        browser.quit()
+# Runner
+if __name__ == "
