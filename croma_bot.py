@@ -16,7 +16,7 @@ with open('products.json', 'r') as f:
     products = json.load(f)
 
 # Load Telegram bot config
-with open('telegram/telegram.json', 'r') as f:
+with open('telegram.json', 'r') as f:
     telegram_config = json.load(f)
 
 TELEGRAM_BOT_TOKEN = telegram_config['bot_token']
