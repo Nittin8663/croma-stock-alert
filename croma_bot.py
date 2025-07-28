@@ -43,11 +43,19 @@ def setup_browser():
     driver = webdriver.Chrome(options=options)
     return driver
 
-# Check stock from HTML
+# === NEW STOCK CHECK LOGIC ===
 def is_in_stock(page_source):
     soup = BeautifulSoup(page_source, 'html.parser')
-    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
-    return out_of_stock_tag is None
+
+    # Try to find 'Buy Now' button
+    buy_btn = soup.find("button", string=lambda s: s and "Buy Now" in s)
+
+    if buy_btn:
+        btn_class = buy_btn.get("class", [])
+        is_disabled = "disabled" in buy_btn.attrs or any("disabled" in c.lower() for c in btn_class)
+        if not is_disabled:
+            return True  # In stock
+    return False  # Out of stock or button missing/disabled
 
 # Main checking loop
 def check_stock(driver):
@@ -57,7 +65,7 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Wait for JS to load fully
+            time.sleep(4)  # Let JS content load
             page_source = driver.page_source
             if is_in_stock(page_source):
                 print(f"[🟢 In Stock] {name}")
