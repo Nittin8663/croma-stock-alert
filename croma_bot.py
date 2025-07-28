@@ -7,7 +7,14 @@ from bs4 import BeautifulSoup
 CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+    "DNT": "1",
+    "Connection": "keep-alive"
+}
 
 # Load telegram config
 def load_telegram_config():
@@ -45,6 +52,10 @@ def check_stock():
         url = product['url']
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
+            if response.status_code == 403:
+                print(f"[Retry] 403 for {name}, retrying with different headers...")
+                response = requests.get(url, headers=HEADERS, timeout=10)
+
             if response.status_code == 200:
                 in_stock = is_in_stock(response.text)
                 if in_stock:
