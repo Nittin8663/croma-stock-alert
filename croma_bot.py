@@ -1,71 +1,81 @@
-import json
 import time
+import json
 import requests
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-import tempfile
 
-# Load Telegram credentials
-with open('telegram.json', 'r') as f:
-    telegram_config = json.load(f)
-    TELEGRAM_BOT_TOKEN = telegram_config['bot_token']
-    TELEGRAM_CHAT_ID = telegram_config['chat_id']
+# === CONFIG ===
+CHECK_INTERVAL = 20  # seconds
+PRODUCTS_FILE = 'products.json'
+TELEGRAM_FILE = 'telegram.json'
+
+# Load Telegram config
+def load_telegram_config():
+    with open(TELEGRAM_FILE, 'r') as f:
+        data = json.load(f)
+        return data['token'], data['chat_id']
+
+TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
 
 # Load product list
-with open('products.json', 'r') as f:
-    products = json.load(f)
+def load_products():
+    with open(PRODUCTS_FILE, 'r') as f:
+        return json.load(f)
 
-# Setup headless Chrome options
-options = Options()
-options.add_argument('--headless')
-options.add_argument('--disable-gpu')
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-dev-shm-usage')
-user_data_dir = tempfile.mkdtemp()
-options.add_argument(f"--user-data-dir={user_data_dir}")
-
-print("\n🚀 Croma Stock Alert Bot Started...")
-
-def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+# Send Telegram alert
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload, timeout=10)
-    except requests.exceptions.RequestException as e:
-        print("[Telegram Error]", e)
+        requests.post(url, data=data)
+    except Exception as e:
+        print(f"[❌] Error sending message: {e}")
 
-# Track previously sent alerts to avoid duplicates
-sent_alerts = set()
+# Setup headless Chrome browser
+def setup_browser():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920x1080')
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-while True:
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+# Check stock from HTML
+def is_in_stock(page_source):
+    soup = BeautifulSoup(page_source, 'html.parser')
+    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
+    return out_of_stock_tag is None
+
+# Main checking loop
+def check_stock(driver):
+    products = load_products()
     for product in products:
         name = product['name']
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(2)  # wait for page to load
-            buy_button = driver.find_elements(By.XPATH, "//button[contains(., 'Add to Cart')]" )
-
-            if buy_button:
-                if url not in sent_alerts:
-                    message = f"[🟢 In Stock] {name}\n{url}"
-                    print(message)
-                    send_telegram_alert(message)
-                    sent_alerts.add(url)
+            time.sleep(3)  # Wait for JS to load fully
+            page_source = driver.page_source
+            if is_in_stock(page_source):
+                print(f"[🟢 In Stock] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
-                if url in sent_alerts:
-                    sent_alerts.remove(url)
         except Exception as e:
-            print(f"[⚠️] Failed to fetch {name} - {str(e)}")
+            print(f"[❌] Error checking {name}: {e}")
 
-    driver.quit()
-    time.sleep(20)
+# Runner
+if __name__ == "__main__":
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
+    browser = setup_browser()
+    try:
+        while True:
+            check_stock(browser)
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        browser.quit()
