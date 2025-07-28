@@ -44,13 +44,13 @@ def setup_browser():
     driver = webdriver.Chrome(options=options)
     return driver
 
-# Check if Buy Now button is active
+# Updated stock check logic using Buy Now button
 def is_in_stock(driver):
     try:
         button = driver.find_element(By.XPATH, "//button[contains(translate(., 'BUY NOW', 'buy now'), 'buy now')]")
-        class_attr = button.get_attribute("class")
         disabled = button.get_attribute("disabled")
-        if disabled or "disabled" in class_attr.lower():
+        classes = button.get_attribute("class") or ""
+        if disabled is not None or "disabled" in classes.lower():
             return False
         return True
     except:
@@ -64,7 +64,8 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Wait for JS to load
+            time.sleep(3)  # Wait for JS to load fully
+
             if is_in_stock(driver):
                 print(f"[🟢 In Stock] {name}")
                 send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
