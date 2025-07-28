@@ -9,8 +9,8 @@ from bs4 import BeautifulSoup
 with open('products.json', 'r') as f:
     products = json.load(f)
 
-# Load Telegram config
-with open('telegram/telegram.json', 'r') as f:
+# Load Telegram config from root directory
+with open('telegram.json', 'r') as f:
     telegram_config = json.load(f)
 
 TELEGRAM_TOKEN = telegram_config['token']
