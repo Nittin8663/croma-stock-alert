@@ -8,10 +8,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 # === CONFIG ===
-CHECK_INTERVAL = 30  # seconds
+CHECK_INTERVAL = 20  # seconds
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
-PINCODE = "400049"  # Change this if needed
+PINCODE = "400049"  # Update pincode if needed
 
 # Load Telegram config
 def load_telegram_config():
@@ -45,41 +45,39 @@ def setup_browser():
     options.add_argument('--window-size=1920x1080')
     return webdriver.Chrome(options=options)
 
-# Check if "Buy Now" button is present and green (active)
+# Check if "Buy Now" button is present
 def is_buy_now_available(driver):
     try:
         buy_btn = driver.find_element(By.XPATH, "//button[contains(., 'Buy Now')]")
-        if buy_btn and buy_btn.is_enabled():
-            return True
+        return buy_btn.is_enabled()
     except:
-        pass
-    return False
+        return False
 
-# Check pincode deliverability
+# Check if deliverable to specific pincode
 def check_pincode_deliverable(driver, pincode):
     try:
-        # Click the "Delivery at" button if needed
+        # Click on pincode change input if visible
         delivery_btn = driver.find_element(By.CLASS_NAME, "delivery-check-pincode")
         delivery_btn.click()
         time.sleep(1)
 
-        # Find pincode input
-        input_field = driver.find_element(By.ID, "pincode-check")
-        input_field.clear()
-        input_field.send_keys(pincode)
-        input_field.send_keys(Keys.RETURN)
-        time.sleep(3)
+        # Enter pincode and submit
+        pincode_input = driver.find_element(By.ID, "pincode-check")
+        pincode_input.clear()
+        pincode_input.send_keys(pincode)
+        pincode_input.send_keys(Keys.RETURN)
+        time.sleep(2)
 
-        # Check for delivery message
+        # Check result
         page = driver.page_source
         soup = BeautifulSoup(page, 'html.parser')
-        not_deliverable = soup.find(text=lambda t: "Not Available for your pincode" in t)
+        not_deliverable = soup.find(string=lambda t: "Not Available for your pincode" in t)
         return not bool(not_deliverable)
     except Exception as e:
-        print(f"[⚠️] Pincode check error: {e}")
+        print(f"[⚠️] Pincode check failed: {e}")
         return False
 
-# Main check loop
+# Main checker
 def check_stock(driver):
     products = load_products()
     for product in products:
@@ -94,10 +92,10 @@ def check_stock(driver):
 
             if in_stock and deliverable:
                 print(f"[✅ In Stock & Deliverable] {name}")
-                send_telegram_message(f"✅ *{name}* is *In Stock* and *Deliverable* to `{PINCODE}`!\n[Buy Now]({url})")
+                send_telegram_message(f"✅ *{name}* is *IN STOCK* and *DELIVERABLE* to `{PINCODE}`.\n[Buy Now]({url})")
             elif in_stock and not deliverable:
                 print(f"[⚠️ In Stock, ❌ Not Deliverable] {name}")
-                send_telegram_message(f"⚠️ *{name}* is *In Stock* but *NOT Deliverable* to `{PINCODE}`.\n[View Product]({url})")
+                send_telegram_message(f"⚠️ *{name}* is *IN STOCK* but *NOT Deliverable* to `{PINCODE}`.\n[View Product]({url})")
             else:
                 print(f"[🔴 Out of Stock] {name}")
         except Exception as e:
