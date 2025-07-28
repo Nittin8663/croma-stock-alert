@@ -6,29 +6,27 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
-PINCODE = "400049"
 PRODUCTS_FILE = 'products.json'
 TELEGRAM_FILE = 'telegram.json'
+PINCODE = "400049"
 
-# === Load config ===
+# Load Telegram config
 def load_telegram_config():
     with open(TELEGRAM_FILE, 'r') as f:
         data = json.load(f)
         return data['token'], data['chat_id']
 
+TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
+
+# Load product list
 def load_products():
     with open(PRODUCTS_FILE, 'r') as f:
         return json.load(f)
 
-TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
-
-# === Telegram Notify ===
+# Send Telegram alert
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -37,7 +35,7 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"[❌] Error sending message: {e}")
 
-# === Headless Chrome Setup ===
+# Setup headless Chrome browser
 def setup_browser():
     options = Options()
     options.add_argument('--headless')
@@ -45,40 +43,60 @@ def setup_browser():
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920x1080')
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-# === Stock Check ===
-def is_in_stock(soup):
-    return soup.find("div", class_="out-of-stock-msg") is None
+# Check stock from HTML
+def is_in_stock(page_source):
+    soup = BeautifulSoup(page_source, 'html.parser')
+    out_of_stock_tag = soup.find("div", class_="out-of-stock-msg")
+    return out_of_stock_tag is None
 
-# === Pincode Check ===
+# Check deliverability to the given pincode
 def is_deliverable(driver):
     try:
-        # Wait for pincode input using any known ID or fallback
-        pin_input = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((
-                By.CSS_SELECTOR, 'input[id*="pincode"], input[class*="pincode"]'
-            ))
-        )
-        pin_input.clear()
-        pin_input.send_keys(PINCODE)
-        pin_input.send_keys(Keys.RETURN)
-        
-        # Wait for result (e.g. "Available at", "Not deliverable", etc.)
-        WebDriverWait(driver, 6).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "delivery-message"))
-        )
+        # Try multiple possible selectors
+        input_found = False
+        possible_selectors = [
+            '[id="pincode-check"]',
+            'input[placeholder*="Enter Pincode"]',
+            'input[class*="pincode"]',
+            'input[type="tel"]',
+        ]
+        for selector in possible_selectors:
+            try:
+                input_element = driver.find_element(By.CSS_SELECTOR, selector)
+                input_found = True
+                break
+            except:
+                continue
+
+        if not input_found:
+            print("[⚠️] Pincode input not found.")
+            return False
+
+        input_element.clear()
+        input_element.send_keys(PINCODE)
+        input_element.send_keys(Keys.RETURN)
+        time.sleep(3)
+
+        # Check delivery status text
         page = driver.page_source
         soup = BeautifulSoup(page, 'html.parser')
-        msg = soup.find("div", class_="delivery-message")
-        if msg and "not available" in msg.text.lower():
-            return False
-        return True
+        delivery_texts = soup.find_all(string=True)
+        for text in delivery_texts:
+            if "not deliverable" in text.lower():
+                return False
+            if "deliverable" in text.lower():
+                return True
+
+        return False  # Default fallback
+
     except Exception as e:
         print(f"[⚠️] Pincode check failed: {e}")
         return False
 
-# === Main Checker ===
+# Main checking loop
 def check_stock(driver):
     products = load_products()
     for product in products:
@@ -86,32 +104,26 @@ def check_stock(driver):
         url = product['url']
         try:
             driver.get(url)
-            time.sleep(3)  # Allow JS content to load
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            time.sleep(3)
+            page_source = driver.page_source
 
-            stock = is_in_stock(soup)
+            in_stock = is_in_stock(page_source)
             deliverable = is_deliverable(driver)
 
-            if stock and deliverable:
-                status = f"[🟢 In Stock & ✅ Deliverable] {name}"
-                msg = f"🟢 *{name}* is *IN STOCK* and *Deliverable to {PINCODE}*!\n[Buy Now]({url})"
-            elif stock and not deliverable:
-                status = f"[🟡 In Stock but ❌ Not Deliverable] {name}"
-                msg = f"🟡 *{name}* is *IN STOCK* but *NOT Deliverable to {PINCODE}*.\n[Buy Now]({url})"
+            if in_stock and deliverable:
+                print(f"[🟢 In Stock & Deliverable] {name}")
+                send_telegram_message(f"🟢 *{name}* is *IN STOCK* and *DELIVERABLE* to {PINCODE}! \n[Buy Now]({url})")
+            elif in_stock and not deliverable:
+                print(f"[🟡 In Stock but ❌ Not Deliverable] {name}")
             else:
-                status = f"[🔴 Out of Stock] {name}"
-                msg = None
-
-            print(status)
-            if msg:
-                send_telegram_message(msg)
+                print(f"[🔴 Out of Stock] {name}")
 
         except Exception as e:
             print(f"[❌] Error checking {name}: {e}")
 
-# === Runner ===
+# Runner
 if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot Started...")
+    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
     browser = setup_browser()
     try:
         while True:
