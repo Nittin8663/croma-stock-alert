@@ -1,105 +1,54 @@
-import requests
-from bs4 import BeautifulSoup
 import time
 import json
-from datetime import datetime
-from selenium import webdriver  # Backup for dynamic content
-import random
+import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 
-# Load Telegram config
+# === Load Config ===
 with open('telegram.json') as f:
-    config = json.load(f)
-TOKEN = config['token']
-CHAT_ID = config['chat_id']
+    telegram = json.load(f)
 
-# Products to track
-PRODUCTS = {
-    "Vivo X200 FE 5G": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890",
-    "Vivo Y300 5G": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901"
-}
+BOT_TOKEN = telegram['token']
+CHAT_ID = telegram['chat_id']
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-# Rotating headers to prevent blocking
-HEADERS = {
-    "User-Agent": random.choice([
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    ]),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.croma.com/"
-}
+with open('products.json') as f:
+    PRODUCTS = json.load(f)
 
-def send_alert(message):
-    """Send Telegram notification"""
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+CHECK_INTERVAL = 20  # seconds
+
+# === Setup Selenium ===
+chrome_options = Options()
+chrome_options.add_argument('--headless')
+chrome_options.add_argument('--no-sandbox')
+chrome_options.add_argument('--disable-dev-shm-usage')
+driver = webdriver.Chrome(options=chrome_options)
+
+def send_telegram(message):
     try:
-        requests.post(url, json={"chat_id": CHAT_ID, "text": message})
+        payload = {'chat_id': CHAT_ID, 'text': message}
+        requests.post(TELEGRAM_API, data=payload)
     except Exception as e:
-        print(f"Telegram alert failed: {e}")
+        print("Telegram send error:", e)
 
-def check_stock(url):
-    """Check stock status with Croma-specific selectors"""
+def check_stock(product):
+    driver.get(product['url'])
+    time.sleep(3)  # wait for page to load
+
     try:
-        # Random delay to mimic human behavior
-        time.sleep(random.uniform(1, 3))
-        
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Croma-specific selectors (updated July 2025)
-        add_to_cart = soup.find("button", class_="pdp-add-to-cart")
-        notify_me = soup.find("button", text="Notify Me")  # Out of stock indicator
-        
-        if add_to_cart and "Add to Cart" in add_to_cart.text:
-            return "IN STOCK"
-        elif notify_me:
-            return "OUT OF STOCK"
-        
-        # Fallback to Selenium if requests fails
-        return check_stock_selenium(url)
-            
-    except Exception as e:
-        return f"ERROR: {str(e)}"
+        add_to_cart = driver.find_element(By.XPATH, "//button[contains(text(),'Add to Cart')]")
+        if add_to_cart.is_enabled():
+            print(f"[AVAILABLE] {product['name']}")
+            send_telegram(f"🟢 IN STOCK: {product['name']}\n{product['url']}")
+        else:
+            print(f"[OUT OF STOCK] {product['name']}")
+    except Exception:
+        print(f"[OUT OF STOCK] {product['name']} (Button not found)")
 
-def check_stock_selenium(url):
-    """Backup method for JavaScript-heavy pages"""
-    try:
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless')  # Run in background
-        driver = webdriver.Chrome(options=options)
-        driver.get(url)
-        
-        # Selenium selectors (same logic as BeautifulSoup)
-        try:
-            if driver.find_element_by_css_selector("button.pdp-add-to-cart"):
-                return "IN STOCK"
-            elif driver.find_element_by_xpath("//button[contains(text(),'Notify Me')]"):
-                return "OUT OF STOCK"
-        finally:
-            driver.quit()
-            
-        return "UNKNOWN (Selenium couldn't detect status)"
-    except Exception as e:
-        return f"SELENIUM ERROR: {str(e)}"
-
-def main():
-    print(f"🚀 Tracking {len(PRODUCTS)} products. Press Ctrl+C to stop.")
-    previous_status = {name: None for name in PRODUCTS}
-    
-    while True:
-        for name, url in PRODUCTS.items():
-            status = check_stock(url)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            if status != previous_status[name]:
-                alert = f"📢 {name}: {status}\n{url}\n({timestamp})"
-                print(alert)
-                if "ERROR" not in status:
-                    send_alert(alert)
-                previous_status[name] = status
-            
-            time.sleep(random.uniform(3, 7))  # Random delay between products
-        
-        time.sleep(20)  # Main check interval
-
-if __name__ == "__main__":
-    main()
+# === Loop Forever ===
+print("Bot started... checking every", CHECK_INTERVAL, "seconds.")
+while True:
+    for product in PRODUCTS:
+        check_stock(product)
+    time.sleep(CHECK_INTERVAL)
