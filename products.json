@@ -1,11 +1,5 @@
-
-[
-  {
-    "name": "Galaxy S24 Ultra 256GB",
-    "url": "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"
-  },
-  {
-    "name": "Flip7",
-    "url": "https://www.samsung.com/in/smartphones/galaxy-z-flip7-fe/buy/?modelCode=SM-F761BZKEINS"
-  }
-]
+{
+  "name": "Galaxy Z Flip7 FE 8GB/128GB Black",
+  "url": "https://www.samsung.com/in/smartphones/galaxy-z-flip7-fe/buy/?modelCode=SM-F761BZKEINS",
+  "variant_keywords": ["128gb", "8gb", "black"]
+}
