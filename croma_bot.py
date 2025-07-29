@@ -3,66 +3,78 @@ from bs4 import BeautifulSoup
 import time
 import json
 from datetime import datetime
+from selenium import webdriver  # Only if needed for dynamic content
 
-# Load Telegram credentials from JSON
+# Load Telegram config
 with open('telegram.json') as f:
-    telegram_config = json.load(f)
+    config = json.load(f)
+TOKEN = config['token']
+CHAT_ID = config['chat_id']
 
-TOKEN = telegram_config['token']
-CHAT_ID = telegram_config['chat_id']
-
-# Product URLs
+# Products to track (add more as needed)
 PRODUCTS = {
     "Vivo X200 FE 5G": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890",
     "Vivo Y300 5G": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901"
 }
 
-# Track previous status to avoid duplicate alerts
-previous_status = {name: None for name in PRODUCTS.keys()}
+# Browser-like headers to avoid blocking
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.croma.com/"
+}
 
-def send_telegram_alert(message):
+def send_alert(message):
+    """Send Telegram notification"""
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
-    requests.post(url, json=payload)
+    requests.post(url, json={"chat_id": CHAT_ID, "text": message})
 
 def check_stock(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    """Check stock status with error handling"""
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Customize based on Croma's HTML (inspect page to update selectors)
-        if "Add to Cart" in str(soup):
+        # CUSTOMIZE THESE SELECTORS BASED ON CROMA'S HTML
+        # Option 1: Check for button text
+        if soup.find("button", text=lambda t: t and "Add to Cart" in t):
             return "IN STOCK"
-        elif "Out of Stock" in str(soup) or "Notify Me" in str(soup):
+        
+        # Option 2: Check for out-of-stock class (inspect Croma's page)
+        if soup.find("div", class_="out-of-stock"):  # Update class name
             return "OUT OF STOCK"
-        else:
-            return "UNKNOWN"
+        
+        # Fallback: Raw text search (less reliable)
+        page_text = soup.get_text().lower()
+        if "add to cart" in page_text:
+            return "IN STOCK"
+        elif "out of stock" in page_text or "notify me" in page_text:
+            return "OUT OF STOCK"
+        
+        return "UNKNOWN (Update selectors in bot.py)"
+    
     except Exception as e:
-        print(f"Error checking {url}: {e}")
-        return "ERROR"
+        return f"ERROR: {str(e)}"
 
 def main():
-    print("Starting stock monitor... Press Ctrl+C to stop.")
+    print(f"🚀 Tracking {len(PRODUCTS)} products. Press Ctrl+C to stop.")
+    previous_status = {name: None for name in PRODUCTS}
+    
     while True:
         for name, url in PRODUCTS.items():
-            current_status = check_stock(url)
+            status = check_stock(url)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            if current_status != previous_status[name]:
-                message = f"🚀 {name}: {current_status}\n{url}\n({timestamp})"
-                print(message)
-                send_telegram_alert(message)
-                previous_status[name] = current_status
+            if status != previous_status[name]:
+                alert = f"📢 {name}: {status}\n{url}\n({timestamp})"
+                print(alert)  # Console log
+                if "ERROR" not in status and "UNKNOWN" not in status:
+                    send_alert(alert)  # Telegram only for clear status changes
+                previous_status[name] = status
             
-            time.sleep(1)  # Small delay between product checks
+            time.sleep(5)  # Delay between product checks
         
-        time.sleep(20)  # Check every 20 seconds
+        time.sleep(20)  # Main check interval
 
 if __name__ == "__main__":
     main()
