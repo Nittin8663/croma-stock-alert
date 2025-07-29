@@ -7,14 +7,18 @@ from selenium.webdriver.common.by import By
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
-PRODUCT_URL = "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"  # replace with your desired product
-TELEGRAM_CONFIG_PATH = "telegram.json"
+PRODUCTS_FILE = "products.json"
+TELEGRAM_FILE = "telegram.json"
 
 # === LOAD TELEGRAM CONFIG ===
-with open(TELEGRAM_CONFIG_PATH, "r") as f:
+with open(TELEGRAM_FILE, "r") as f:
     config = json.load(f)
     TELEGRAM_BOT_TOKEN = config["token"]
     TELEGRAM_CHAT_ID = config["chat_id"]
+
+# === LOAD PRODUCTS ===
+with open(PRODUCTS_FILE, "r") as f:
+    products = json.load(f)
 
 # === SEND TELEGRAM MESSAGE ===
 def send_telegram_message(message):
@@ -32,8 +36,8 @@ def send_telegram_message(message):
         print("Telegram error:", e)
 
 # === CHECK STOCK FUNCTION ===
-def is_product_available(driver):
-    driver.get(PRODUCT_URL)
+def is_product_available(driver, url):
+    driver.get(url)
     time.sleep(5)
     try:
         add_to_cart = driver.find_element(By.XPATH, "//button[contains(text(), 'Add to Cart')]")
@@ -49,22 +53,25 @@ def main():
     chrome_options.add_argument("--disable-dev-shm-usage")
     driver = webdriver.Chrome(options=chrome_options)
 
-    notified = False
+    notified_flags = {product["url"]: False for product in products}
 
     while True:
-        try:
-            if is_product_available(driver):
-                if not notified:
-                    print("[IN STOCK] Sending Telegram alert...")
-                    send_telegram_message(f"✅ <b>Product In Stock</b>\n{PRODUCT_URL}")
-                    notified = True
+        for product in products:
+            name = product["name"]
+            url = product["url"]
+            try:
+                if is_product_available(driver, url):
+                    if not notified_flags[url]:
+                        print(f"[IN STOCK] {name}")
+                        send_telegram_message(f"✅ <b>{name}</b> is <b>IN STOCK</b>\n{url}")
+                        notified_flags[url] = True
+                    else:
+                        print(f"[IN STOCK] {name} (Already notified)")
                 else:
-                    print("[IN STOCK] Already notified.")
-            else:
-                print("[OUT OF STOCK]")
-                notified = False
-        except Exception as e:
-            print("Error:", e)
+                    print(f"[OUT OF STOCK] {name}")
+                    notified_flags[url] = False
+            except Exception as e:
+                print(f"[ERROR] {name}: {e}")
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
