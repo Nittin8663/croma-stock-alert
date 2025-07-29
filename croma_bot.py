@@ -1,89 +1,68 @@
-import time
-import json
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import time
+import json
+from datetime import datetime
 
-# === CONFIG ===
-CHECK_INTERVAL = 20  # seconds
-PRODUCTS_FILE = 'products.json'
-TELEGRAM_FILE = 'telegram.json'
+# Load Telegram credentials from JSON
+with open('telegram.json') as f:
+    telegram_config = json.load(f)
 
-# Load Telegram config
-def load_telegram_config():
-    with open(TELEGRAM_FILE, 'r') as f:
-        data = json.load(f)
-        return data['token'], data['chat_id']
+TOKEN = telegram_config['token']
+CHAT_ID = telegram_config['chat_id']
 
-TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = load_telegram_config()
+# Product URLs
+PRODUCTS = {
+    "Vivo X200 FE 5G": "https://www.croma.com/vivo-x200-fe-5g-12gb-ram-256gb-frost-blue-/p/316890",
+    "Vivo Y300 5G": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901"
+}
 
-# Load product list
-def load_products():
-    with open(PRODUCTS_FILE, 'r') as f:
-        return json.load(f)
+# Track previous status to avoid duplicate alerts
+previous_status = {name: None for name in PRODUCTS.keys()}
 
-# Send Telegram alert
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+def send_telegram_alert(message):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+    requests.post(url, json=payload)
+
+def check_stock(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        requests.post(url, data=data)
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Customize based on Croma's HTML (inspect page to update selectors)
+        if "Add to Cart" in str(soup):
+            return "IN STOCK"
+        elif "Out of Stock" in str(soup) or "Notify Me" in str(soup):
+            return "OUT OF STOCK"
+        else:
+            return "UNKNOWN"
     except Exception as e:
-        print(f"[❌] Error sending message: {e}")
+        print(f"Error checking {url}: {e}")
+        return "ERROR"
 
-# Setup headless Chrome browser
-def setup_browser():
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920x1080')
-    driver = webdriver.Chrome(options=options)
-    return driver
+def main():
+    print("Starting stock monitor... Press Ctrl+C to stop.")
+    while True:
+        for name, url in PRODUCTS.items():
+            current_status = check_stock(url)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            if current_status != previous_status[name]:
+                message = f"🚀 {name}: {current_status}\n{url}\n({timestamp})"
+                print(message)
+                send_telegram_alert(message)
+                previous_status[name] = current_status
+            
+            time.sleep(1)  # Small delay between product checks
+        
+        time.sleep(20)  # Check every 20 seconds
 
-# === NEW STOCK CHECK LOGIC ===
-def is_in_stock(page_source):
-    soup = BeautifulSoup(page_source, 'html.parser')
-
-    # Try to find 'Buy Now' button
-    buy_btn = soup.find("button", string=lambda s: s and "Buy Now" in s)
-
-    if buy_btn:
-        btn_class = buy_btn.get("class", [])
-        is_disabled = "disabled" in buy_btn.attrs or any("disabled" in c.lower() for c in btn_class)
-        if not is_disabled:
-            return True  # In stock
-    return False  # Out of stock or button missing/disabled
-
-# Main checking loop
-def check_stock(driver):
-    products = load_products()
-    for product in products:
-        name = product['name']
-        url = product['url']
-        try:
-            driver.get(url)
-            time.sleep(4)  # Let JS content load
-            page_source = driver.page_source
-            if is_in_stock(page_source):
-                print(f"[🟢 In Stock] {name}")
-                send_telegram_message(f"🟢 *{name}* is *IN STOCK*! \n[Buy Now]({url})")
-            else:
-                print(f"[🔴 Out of Stock] {name}")
-        except Exception as e:
-            print(f"[❌] Error checking {name}: {e}")
-
-# Runner
 if __name__ == "__main__":
-    print("🚀 Croma Stock Alert Bot (Selenium) Started...")
-    browser = setup_browser()
-    try:
-        while True:
-            check_stock(browser)
-            time.sleep(CHECK_INTERVAL)
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
-    finally:
-        browser.quit()
+    main()
