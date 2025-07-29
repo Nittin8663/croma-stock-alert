@@ -7,14 +7,14 @@ from selenium.webdriver.common.by import By
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
-PRODUCT_URL = "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"  # Replace with your product URL
-TELEGRAM_FILE = "telegram.json"
+PRODUCT_URL = "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"  # Replace with your product
+TELEGRAM_CONFIG_PATH = "telegram.json"  # Path to your existing config file
 
 # === LOAD TELEGRAM CONFIG ===
-with open(TELEGRAM_FILE, "r") as f:
-    data = json.load(f)
-    TELEGRAM_BOT_TOKEN = data["bot_token"]
-    TELEGRAM_CHAT_ID = data["chat_id"]
+with open(TELEGRAM_CONFIG_PATH, "r") as f:
+    config = json.load(f)
+    TELEGRAM_BOT_TOKEN = config["bot_token"]
+    TELEGRAM_CHAT_ID = config["chat_id"]
 
 # === TELEGRAM NOTIFY ===
 def send_telegram_message(message):
@@ -31,13 +31,11 @@ def is_product_available(driver):
     time.sleep(5)
     try:
         add_to_cart = driver.find_element(By.XPATH, "//button[contains(text(), 'Add to Cart')]")
-        if add_to_cart.is_enabled():
-            return True
+        return add_to_cart.is_enabled()
     except:
-        pass
-    return False
+        return False
 
-# === MAIN ===
+# === MAIN LOOP ===
 def main():
     chrome_options = Options()
     chrome_options.add_argument("--headless")
