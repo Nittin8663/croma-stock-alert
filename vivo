@@ -1,44 +1,137 @@
+import sys
+import time
+
+# Check if required packages are installed
+try:
+    import selenium
+    print("✓ Selenium is installed")
+except ImportError:
+    print("✗ Selenium is not installed. Installing it now...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "selenium"])
+    print("Selenium installed successfully!")
+
+try:
+    import webdriver_manager
+    print("✓ webdriver_manager is installed")
+except ImportError:
+    print("✗ webdriver_manager is not installed. Installing it now...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "webdriver_manager"])
+    print("webdriver_manager installed successfully!")
+
+# Import selenium components after ensuring installation
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
-import time
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Debug function to save screenshots
+def save_screenshot(driver, name):
+    try:
+        driver.save_screenshot(f"{name}_screenshot.png")
+        print(f"✓ Saved screenshot as {name}_screenshot.png")
+    except Exception as e:
+        print(f"✗ Failed to save screenshot: {e}")
 
 def check_stock_with_selenium(url, product_name):
+    print(f"\n=== Checking {product_name} ===")
+    print(f"URL: {url}")
+    
     # Set up Chrome options
+    print("Setting up Chrome options...")
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     
-    # Initialize the driver
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
+    driver = None
     try:
+        # Initialize the driver
+        print("Initializing Chrome driver...")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
         # Navigate to the URL
-        print(f"Checking {product_name}...")
+        print(f"Navigating to URL: {url}")
         driver.get(url)
+        print("Page loaded, waiting 5 seconds...")
         time.sleep(5)  # Allow time for the page to load
         
+        # Save page title
+        print(f"Page title: {driver.title}")
+        
+        # Save screenshot for debugging
+        save_screenshot(driver, product_name.replace(" ", "_"))
+        
+        # Save the page source for debugging
+        try:
+            with open(f"{product_name.replace(' ', '_')}_page.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            print(f"✓ Saved page source as {product_name.replace(' ', '_')}_page.html")
+        except Exception as e:
+            print(f"✗ Failed to save page source: {e}")
+        
         # Check for out of stock indicators
+        print("Checking for out-of-stock indicators...")
         page_text = driver.page_source.lower()
-        if any(indicator in page_text for indicator in ['out of stock', 'sold out', 'currently unavailable']):
-            print(f"❌ {product_name} is OUT OF STOCK")
-            return False
+        out_of_stock_indicators = ['out of stock', 'sold out', 'currently unavailable']
+        for indicator in out_of_stock_indicators:
+            if indicator in page_text:
+                print(f"❌ Found '{indicator}' - {product_name} is OUT OF STOCK")
+                return False
         
         # Check for add to cart button
-        add_to_cart_buttons = driver.find_elements(By.CSS_SELECTOR, 'button[data-testid="add-to-cart"], .pdp-button')
-        if add_to_cart_buttons and not 'disabled' in add_to_cart_buttons[0].get_attribute('class'):
-            print(f"✅ {product_name} is IN STOCK!")
-            return True
+        print("Looking for 'Add to Cart' button...")
+        try:
+            add_to_cart_buttons = driver.find_elements(By.CSS_SELECTOR, 'button[data-testid="add-to-cart"], .pdp-button, .add-to-cart-button, .buy-button')
+            if add_to_cart_buttons:
+                print(f"Found {len(add_to_cart_buttons)} potential add-to-cart buttons")
+                for i, button in enumerate(add_to_cart_buttons):
+                    button_text = button.text
+                    button_class = button.get_attribute('class')
+                    button_disabled = button.get_attribute('disabled')
+                    print(f"Button {i+1}: Text='{button_text}', Class='{button_class}', Disabled='{button_disabled}'")
+                
+                if not any(button.get_attribute('disabled') for button in add_to_cart_buttons):
+                    print(f"✅ {product_name} is IN STOCK!")
+                    return True
+            else:
+                print("No add-to-cart buttons found")
+        except Exception as e:
+            print(f"Error checking add-to-cart buttons: {e}")
+        
+        # Check for price elements (often a good indicator)
+        print("Looking for price elements...")
+        try:
+            price_elements = driver.find_elements(By.CSS_SELECTOR, '.price, .pdp-price, [data-testid="price"]')
+            if price_elements:
+                print(f"Found {len(price_elements)} price elements")
+                for i, element in enumerate(price_elements):
+                    print(f"Price element {i+1}: Text='{element.text}'")
+                print(f"✅ Price elements found - {product_name} might be IN STOCK")
+                return True
+            else:
+                print("No price elements found")
+        except Exception as e:
+            print(f"Error checking price elements: {e}")
         
         print(f"❓ Could not determine stock status for {product_name}")
         return False
     
+    except Exception as e:
+        print(f"❌ Error while checking {product_name}: {str(e)}")
+        return False
+    
     finally:
-        driver.quit()
+        if driver:
+            print("Closing Chrome driver...")
+            driver.quit()
 
 # Products to check
 products = [
@@ -46,6 +139,12 @@ products = [
     {"name": "Vivo Y300 5G", "url": "https://www.croma.com/vivo-y300-5g-8gb-ram-128gb-rom-emerald-green-/p/311901"}
 ]
 
+print("===== CROMA STOCK CHECKER =====")
+print(f"Starting check at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"Checking {len(products)} products")
+
 # Check all products
 for product in products:
     check_stock_with_selenium(product["url"], product["name"])
+
+print("\n===== CHECK COMPLETE =====")
