@@ -7,21 +7,27 @@ from selenium.webdriver.common.by import By
 
 # === CONFIG ===
 CHECK_INTERVAL = 20  # seconds
-PRODUCT_URL = "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"  # Replace with your product
-TELEGRAM_CONFIG_PATH = "telegram.json"  # Path to your existing config file
+PRODUCT_URL = "https://www.samsung.com/in/smartphones/galaxy-s24-ultra/buy/"  # replace with your desired product
+TELEGRAM_CONFIG_PATH = "telegram.json"
 
 # === LOAD TELEGRAM CONFIG ===
 with open(TELEGRAM_CONFIG_PATH, "r") as f:
     config = json.load(f)
-    TELEGRAM_BOT_TOKEN = config["bot_token"]
+    TELEGRAM_BOT_TOKEN = config["token"]
     TELEGRAM_CHAT_ID = config["chat_id"]
 
-# === TELEGRAM NOTIFY ===
+# === SEND TELEGRAM MESSAGE ===
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
     try:
-        requests.post(url, data=payload)
+        response = requests.post(url, data=payload)
+        if response.status_code != 200:
+            print("Telegram API error:", response.text)
     except Exception as e:
         print("Telegram error:", e)
 
@@ -50,7 +56,7 @@ def main():
             if is_product_available(driver):
                 if not notified:
                     print("[IN STOCK] Sending Telegram alert...")
-                    send_telegram_message(f"[IN STOCK] {PRODUCT_URL}")
+                    send_telegram_message(f"✅ <b>Product In Stock</b>\n{PRODUCT_URL}")
                     notified = True
                 else:
                     print("[IN STOCK] Already notified.")
