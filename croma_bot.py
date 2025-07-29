@@ -1,81 +1,39 @@
 import time
-import json
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
+from bs4 import BeautifulSoup
+import json
 
-# === CONFIG ===
-CHECK_INTERVAL = 20  # seconds
-PRODUCTS_FILE = 'products.json'
-TELEGRAM_FILE = 'telegram.json'
+def load_telegram_config(path='telegram.json'):
+    with open(path) as f:
+        return json.load(f)
 
-# === Load Telegram config ===
-with open(TELEGRAM_FILE, 'r') as f:
-    tg_data = json.load(f)
-    TELEGRAM_BOT_TOKEN = tg_data['token']
-    TELEGRAM_CHAT_ID = tg_data['chat_id']
+def is_in_stock(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    out_of_stock = soup.find(text=lambda t: t and "out of stock" in t.lower())
+    return not out_of_stock
 
-# === Telegram notify ===
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message}
-    try:
-        requests.post(url, data=payload)
-    except Exception as e:
-        print("Telegram error:", e)
+def send_telegram_message(bot_token, chat_id, message):
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    data = {"chat_id": chat_id, "text": message}
+    requests.post(url, data=data)
 
-# === Load products ===
-with open(PRODUCTS_FILE, 'r') as f:
-    PRODUCTS = json.load(f)
-
-# === Selenium Setup ===
-chrome_options = Options()
-chrome_options.add_argument('--headless')
-chrome_options.add_argument('--no-sandbox')
-chrome_options.add_argument('--disable-dev-shm-usage')
-driver = webdriver.Chrome(options=chrome_options)
-
-# === Stock Check ===
-def check_stock(product):
-    driver.get(product['url'])
-    time.sleep(3)  # Let page load
-
-    variant_keywords = [kw.lower() for kw in product.get("variant_keywords", [])]
-    matched_variant_found = False
-    try:
-        variant_blocks = driver.find_elements(By.CSS_SELECTOR, ".option-button, .btn")
-        for block in variant_blocks:
-            text = block.text.strip().lower()
-            if all(kw in text for kw in variant_keywords):
-                matched_variant_found = True
-                if "unavailable" in text or "sold out" in text:
-                    return f"[OUT OF STOCK] {product['name']}"
-                elif "notify me" in text:
-                    return f"[OUT OF STOCK] {product['name']}"
-                else:
-                    # Try clicking it to confirm it's selectable
-                    try:
-                        block.click()
-                        time.sleep(1)
-                    except Exception:
-                        pass
-                    return f"[IN STOCK ✅] {product['name']} - {product['url']}"
-    except Exception as e:
-        print("Error checking:", product['name'], e)
-
-    if not matched_variant_found:
-        return f"[VARIANT NOT FOUND] {product['name']}"
-    return f"[OUT OF STOCK] {product['name']}"
-
-# === Loop ===
-sent_messages = set()
-while True:
-    for product in PRODUCTS:
-        status = check_stock(product)
-        print(status)
-        if "[IN STOCK" in status and status not in sent_messages:
-            send_telegram_message(status)
-            sent_messages.add(status)
-    time.sleep(CHECK_INTERVAL)
+if __name__ == '__main__':
+    config = load_telegram_config('telegram.json')
+    CROMA_PRODUCT_URL = 'https://www.croma.com/vivo-y400-pro-5g-8gb-ram-256gb-freestyle-white-/p/316365'  # Replace with your product URL
+    CHECK_INTERVAL = 20  # seconds
+    already_notified = False
+    while True:
+        try:
+            if is_in_stock(CROMA_PRODUCT_URL):
+                if not already_notified:
+                    send_telegram_message(config['bot_token'], config['chat_id'],
+                        f"Product is IN STOCK! {CROMA_PRODUCT_URL}")
+                    already_notified = True
+            else:
+                print("Still out of stock...")
+                already_notified = False
+        except Exception as e:
+            print(f"Error: {e}")
+        time.sleep(CHECK_INTERVAL)
